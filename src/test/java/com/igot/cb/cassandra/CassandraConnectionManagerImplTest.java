@@ -5,18 +5,28 @@ import static org.mockito.Mockito.*;
 
 import com.datastax.oss.driver.api.core.ConsistencyLevel;
 import com.datastax.oss.driver.api.core.CqlSession;
+import com.datastax.oss.driver.api.core.CqlSessionBuilder;
 import com.datastax.oss.driver.api.core.DefaultConsistencyLevel;
+import com.datastax.oss.driver.api.core.metadata.EndPoint;
+import com.datastax.oss.driver.api.core.metadata.Metadata;
+import com.datastax.oss.driver.api.core.metadata.Node;
 import com.igot.cb.cassandra.exceptions.CustomException;
 import com.igot.cb.util.Constants;
 import com.igot.cb.util.PropertiesCache;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import org.springframework.http.HttpStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Answers;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
@@ -180,13 +190,138 @@ class CassandraConnectionManagerImplTest {
     void testResourceCleanUp_withException() throws Exception {
         CqlSession mockSession = mock(CqlSession.class);
         doThrow(new RuntimeException("Test exception")).when(mockSession).close();
-        
+
         Field sessionMapField = CassandraConnectionManagerImpl.class.getDeclaredField("cassandraSessionMap");
         sessionMapField.setAccessible(true);
         Map<String, CqlSession> sessionMap = (Map<String, CqlSession>) sessionMapField.get(null);
         sessionMap.put("keyspace1", mockSession);
-        
+
         Thread cleanupThread = new CassandraConnectionManagerImpl.ResourceCleanUp();
         assertDoesNotThrow(cleanupThread::run);
+    }
+
+    private void stubSuccessfulPropertiesCache(PropertiesCache mockPropertiesCache, String host) {
+        when(mockPropertiesCache.getProperty(Constants.CASSANDRA_CONFIG_HOST)).thenReturn(host);
+        when(mockPropertiesCache.getProperty(Constants.CORE_CONNECTIONS_PER_HOST_FOR_LOCAL)).thenReturn("1");
+        when(mockPropertiesCache.getProperty(Constants.CORE_CONNECTIONS_PER_HOST_FOR_REMOTE)).thenReturn("1");
+        when(mockPropertiesCache.getProperty(Constants.HEARTBEAT_INTERVAL)).thenReturn("30000");
+        when(mockPropertiesCache.readProperty(Constants.SUNBIRD_CASSANDRA_CONSISTENCY_LEVEL)).thenReturn("LOCAL_QUORUM");
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, CqlSession> sessionMap() throws Exception {
+        Field sessionMapField = CassandraConnectionManagerImpl.class.getDeclaredField("cassandraSessionMap");
+        sessionMapField.setAccessible(true);
+        return (Map<String, CqlSession>) sessionMapField.get(null);
+    }
+
+    @Test
+    void testCreateCassandraConnection_success_withMultipleHostsAndNodes() {
+        try (MockedStatic<PropertiesCache> propertiesCacheStatic = mockStatic(PropertiesCache.class);
+             MockedStatic<CqlSession> cqlSessionStatic = mockStatic(CqlSession.class)) {
+
+            PropertiesCache mockPropertiesCache = mock(PropertiesCache.class);
+            propertiesCacheStatic.when(PropertiesCache::getInstance).thenReturn(mockPropertiesCache);
+            stubSuccessfulPropertiesCache(mockPropertiesCache, "host1, host2");
+
+            CqlSessionBuilder mockBuilder = mock(CqlSessionBuilder.class, Answers.RETURNS_SELF);
+            CqlSession mockSession = mock(CqlSession.class);
+            Metadata mockMetadata = mock(Metadata.class);
+
+            Node mockNode = mock(Node.class);
+            when(mockNode.getDatacenter()).thenReturn("dc1");
+            when(mockNode.getRack()).thenReturn("rack1");
+            when(mockNode.getEndPoint()).thenReturn(mock(EndPoint.class));
+            Map<UUID, Node> nodes = new HashMap<>();
+            nodes.put(UUID.randomUUID(), mockNode);
+
+            when(mockMetadata.getNodes()).thenReturn(nodes);
+            when(mockMetadata.getClusterName()).thenReturn(Optional.of("testCluster"));
+            when(mockSession.getMetadata()).thenReturn(mockMetadata);
+            when(mockBuilder.build()).thenReturn(mockSession);
+            cqlSessionStatic.when(CqlSession::builder).thenReturn(mockBuilder);
+
+            CassandraConnectionManagerImpl manager = new CassandraConnectionManagerImpl();
+            CqlSession result = manager.getSession("myKeyspace");
+
+            assertNotNull(result);
+            assertSame(mockSession, result);
+        }
+    }
+
+    @Test
+    void testGetSession_returnsCachedSession_whenNotClosed() throws Exception {
+        try (MockedStatic<PropertiesCache> propertiesCacheStatic = mockStatic(PropertiesCache.class);
+             MockedStatic<CqlSession> cqlSessionStatic = mockStatic(CqlSession.class)) {
+
+            PropertiesCache mockPropertiesCache = mock(PropertiesCache.class);
+            propertiesCacheStatic.when(PropertiesCache::getInstance).thenReturn(mockPropertiesCache);
+            stubSuccessfulPropertiesCache(mockPropertiesCache, "localhost");
+
+            CqlSessionBuilder mockBuilder = mock(CqlSessionBuilder.class, Answers.RETURNS_SELF);
+            CqlSession mockConstructedSession = mock(CqlSession.class);
+            Metadata mockMetadata = mock(Metadata.class);
+            when(mockMetadata.getNodes()).thenReturn(Collections.emptyMap());
+            when(mockMetadata.getClusterName()).thenReturn(Optional.of("testCluster"));
+            when(mockConstructedSession.getMetadata()).thenReturn(mockMetadata);
+            when(mockBuilder.build()).thenReturn(mockConstructedSession);
+            cqlSessionStatic.when(CqlSession::builder).thenReturn(mockBuilder);
+
+            CassandraConnectionManagerImpl manager = new CassandraConnectionManagerImpl();
+
+            CqlSession cachedSession = mock(CqlSession.class);
+            when(cachedSession.isClosed()).thenReturn(false);
+            sessionMap().put("cachedKeyspace", cachedSession);
+
+            CqlSession result = manager.getSession("cachedKeyspace");
+
+            assertSame(cachedSession, result);
+        }
+    }
+
+    @Test
+    void testGetSession_createsNewSession_whenCachedSessionIsClosed() throws Exception {
+        try (MockedStatic<PropertiesCache> propertiesCacheStatic = mockStatic(PropertiesCache.class);
+             MockedStatic<CqlSession> cqlSessionStatic = mockStatic(CqlSession.class)) {
+
+            PropertiesCache mockPropertiesCache = mock(PropertiesCache.class);
+            propertiesCacheStatic.when(PropertiesCache::getInstance).thenReturn(mockPropertiesCache);
+            stubSuccessfulPropertiesCache(mockPropertiesCache, "localhost");
+
+            CqlSessionBuilder mockBuilder = mock(CqlSessionBuilder.class, Answers.RETURNS_SELF);
+            CqlSession mockConstructedSession = mock(CqlSession.class);
+            Metadata mockMetadata = mock(Metadata.class);
+            when(mockMetadata.getNodes()).thenReturn(Collections.emptyMap());
+            when(mockMetadata.getClusterName()).thenReturn(Optional.of("testCluster"));
+            when(mockConstructedSession.getMetadata()).thenReturn(mockMetadata);
+            when(mockBuilder.build()).thenReturn(mockConstructedSession);
+            cqlSessionStatic.when(CqlSession::builder).thenReturn(mockBuilder);
+
+            CassandraConnectionManagerImpl manager = new CassandraConnectionManagerImpl();
+
+            CqlSession closedSession = mock(CqlSession.class);
+            when(closedSession.isClosed()).thenReturn(true);
+            sessionMap().put("keyspaceX", closedSession);
+
+            CqlSession result = manager.getSession("keyspaceX");
+
+            assertNotSame(closedSession, result);
+            assertSame(mockConstructedSession, result);
+        }
+    }
+
+    @Test
+    void testCreateCassandraConnectionWithKeySpaces_wrapsNumberFormatException() {
+        try (MockedStatic<PropertiesCache> propertiesCacheStatic = mockStatic(PropertiesCache.class)) {
+            PropertiesCache mockPropertiesCache = mock(PropertiesCache.class);
+            propertiesCacheStatic.when(PropertiesCache::getInstance).thenReturn(mockPropertiesCache);
+            when(mockPropertiesCache.getProperty(Constants.CASSANDRA_CONFIG_HOST)).thenReturn("localhost");
+            when(mockPropertiesCache.getProperty(Constants.CORE_CONNECTIONS_PER_HOST_FOR_LOCAL)).thenReturn("not-a-number");
+            when(mockPropertiesCache.readProperty(Constants.SUNBIRD_CASSANDRA_CONSISTENCY_LEVEL)).thenReturn("LOCAL_QUORUM");
+
+            CustomException exception = assertThrows(CustomException.class, CassandraConnectionManagerImpl::new);
+            assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, exception.getHttpStatusCode());
+            assertTrue(exception.getMessage().contains("not-a-number"));
+        }
     }
 }

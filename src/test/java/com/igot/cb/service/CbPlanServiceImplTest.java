@@ -19,6 +19,7 @@ import org.mockito.MockitoAnnotations;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.igot.cb.cassandra.CassandraOperation;
 import com.igot.cb.elasticsearch.dto.SearchCriteria;
@@ -2342,6 +2343,764 @@ class CbPlanServiceImplTest {
     @Test
     void testUpsertCbPlanContentLookup_FixedFieldName() {
         testUpsertCbPlanContentLookup_ExistingContent();
+    }
+
+    // ===================== New tests added to raise coverage =====================
+
+    // ---- createCbPlanByAdmin ----
+
+    @Test
+    void testCreateCbPlanByAdmin_MissingTargetedOrganisation_ReturnsBadRequest() {
+        ApiRequest request = new ApiRequest();
+        request.setRequest(new HashMap<>());
+
+        ApiResponse response = cbPlanService.createCbPlanByAdmin(request, "token");
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertEquals("targetedOrganisation is required", response.getParams().getErr());
+    }
+
+    @Test
+    void testCreateCbPlanByAdmin_Success_SetsOrgIdListAndDelegatesWithIsAdminTrue() {
+        ApiRequest request = new ApiRequest();
+        Map<String, Object> requestMap = new HashMap<>();
+        requestMap.put(Constants.TARGETED_ORGANISATION, "orgAdmin1");
+        request.setRequest(requestMap);
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("adminUser");
+        when(userUtilityService.readUserProfileFromDB(eq("adminUser"), anyList()))
+            .thenReturn(Map.of(Constants.ID, "adminUser", Constants.ROOT_ORG_ID, "root1"));
+        when(userUtilityService.readOrgFromDB(eq("root1"), any()))
+            .thenReturn(Map.of(Constants.IS_CCA, false));
+        when(requestValidator.validateCbPlanCreateRequest(any(ApiRequest.class), anyBoolean(), anyString(), eq(true)))
+            .thenReturn(Collections.emptyList());
+        ApiResponse insertResp = new ApiResponse();
+        insertResp.put(Constants.RESPONSE, Constants.SUCCESS);
+        when(cassandraOperation.insertRecord(anyString(), anyString(), anyMap())).thenReturn(insertResp);
+
+        ApiResponse response = cbPlanService.createCbPlanByAdmin(request, "token");
+
+        assertEquals(Constants.CREATED, response.getResult().get(Constants.STATUS));
+        assertEquals(List.of("orgAdmin1"), requestMap.get(Constants.ORG_ID_LIST));
+    }
+
+    // ---- publishCbPlanByAdmin ----
+
+    @Test
+    void testPublishCbPlanByAdmin_MissingTargetedOrganisation_ReturnsBadRequest() {
+        ApiRequest request = new ApiRequest();
+        request.setRequest(new HashMap<>());
+
+        ApiResponse response = cbPlanService.publishCbPlanByAdmin(request, "token");
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+    }
+
+    @Test
+    void testPublishCbPlanByAdmin_Success_SkipsAuthCheckAndUsesTargetedOrgAsRootOrg() {
+        ApiRequest request = new ApiRequest();
+        Map<String, Object> requestMap = new HashMap<>();
+        requestMap.put(Constants.TARGETED_ORGANISATION, "orgAdmin2");
+        requestMap.put(Constants.ID, "plan1");
+        request.setRequest(requestMap);
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("adminUser");
+        Map<String, Object> existingPlan = new HashMap<>();
+        existingPlan.put(Constants.CREATED_BY, "someoneElse");
+        existingPlan.put(Constants.STATUS, "draft");
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), any(), any(), any()))
+            .thenReturn(List.of(existingPlan));
+        when(userUtilityService.readUserProfileFromDB(eq("adminUser"), anyList()))
+            .thenReturn(Map.of(Constants.ID, "adminUser", Constants.ROOT_ORG_ID, "root1"));
+        when(userUtilityService.readOrgFromDB(anyString(), any()))
+            .thenReturn(Map.of(Constants.IS_CCA, false));
+        when(requestValidator.validateContextData(any(), anyBoolean(), anyString(), any(), anyBoolean()))
+            .thenReturn(Collections.emptyList());
+        Map<String, Object> updateResp = new HashMap<>();
+        updateResp.put(Constants.RESPONSE, Constants.SUCCESS);
+        when(cassandraOperation.updateRecord(anyString(), anyString(), any(), any(), any(), any()))
+            .thenReturn(updateResp);
+
+        ApiResponse response = cbPlanService.publishCbPlanByAdmin(request, "token");
+
+        assertEquals(Constants.SUCCESS, response.getParams().getStatus());
+        verify(userUtilityService).readOrgFromDB(eq("orgAdmin2"), any());
+    }
+
+    // ---- handlePublishLookupUpdates (private, via reflection) ----
+
+    @Test
+    void testHandlePublishLookupUpdates_RespFailed() {
+        Map<String, Object> resp = new HashMap<>();
+        resp.put(Constants.RESPONSE, Constants.FAILED);
+        resp.put(Constants.ERROR_MESSAGE, "db failure");
+        ApiResponse response = new ApiResponse();
+        response.setParams(new ApiRespParam());
+
+        ReflectionTestUtils.invokeMethod(cbPlanService, "handlePublishLookupUpdates",
+            resp, new HashMap<>(), null, new HashSet<>(), new HashSet<>(), "plan1", response);
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
+        assertTrue(response.getParams().getErr().contains("db failure"));
+        assertTrue(response.getParams().getErr().contains("plan1"));
+    }
+
+    @Test
+    void testHandlePublishLookupUpdates_SingleScope_Success() {
+        Map<String, Object> resp = Map.of(Constants.RESPONSE, Constants.SUCCESS);
+        Map<String, Object> updatedRequest = new HashMap<>();
+        updatedRequest.put(Constants.ORG_SCOPE, Constants.SINGLE);
+        ApiResponse bulkResp = new ApiResponse();
+        bulkResp.getParams().setStatus(Constants.SUCCESS);
+        bulkResp.put(Constants.RESPONSE, Constants.SUCCESS);
+        when(cassandraOperation.insertBulkRecord(anyString(), anyString(), anyList())).thenReturn(bulkResp);
+        ApiResponse response = new ApiResponse();
+        response.setParams(new ApiRespParam());
+
+        ReflectionTestUtils.invokeMethod(cbPlanService, "handlePublishLookupUpdates",
+            resp, updatedRequest, null, new HashSet<>(Set.of("org1")), new HashSet<>(), "plan1", response);
+
+        assertNotEquals(Constants.FAILED, response.getParams().getStatus());
+        verify(cassandraOperation, times(1)).insertBulkRecord(anyString(), anyString(), anyList());
+    }
+
+    @Test
+    void testHandlePublishLookupUpdates_CustomScope_Failure() {
+        Map<String, Object> resp = Map.of(Constants.RESPONSE, Constants.SUCCESS);
+        Map<String, Object> updatedRequest = new HashMap<>();
+        updatedRequest.put(Constants.ORG_SCOPE, Constants.CUSTOM);
+        ApiResponse bulkResp = new ApiResponse();
+        bulkResp.getParams().setStatus(Constants.FAILED);
+        bulkResp.getParams().setErr("insert failed");
+        when(cassandraOperation.insertBulkRecord(anyString(), anyString(), anyList())).thenReturn(bulkResp);
+        ApiResponse response = new ApiResponse();
+        response.setParams(new ApiRespParam());
+
+        ReflectionTestUtils.invokeMethod(cbPlanService, "handlePublishLookupUpdates",
+            resp, updatedRequest, null, new HashSet<>(Set.of("org1")), new HashSet<>(), "plan1", response);
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
+        assertEquals("insert failed", response.getParams().getErr());
+    }
+
+    @Test
+    void testHandlePublishLookupUpdates_AllScope_Failure() {
+        Map<String, Object> resp = Map.of(Constants.RESPONSE, Constants.SUCCESS);
+        Map<String, Object> updatedRequest = new HashMap<>();
+        updatedRequest.put(Constants.ORG_SCOPE, Constants.ALL);
+        ApiResponse insertResp = new ApiResponse();
+        insertResp.getParams().setStatus(Constants.FAILED);
+        insertResp.getParams().setErr("all-scope insert failed");
+        when(cassandraOperation.insertRecord(anyString(), anyString(), anyMap())).thenReturn(insertResp);
+        ApiResponse response = new ApiResponse();
+        response.setParams(new ApiRespParam());
+
+        ReflectionTestUtils.invokeMethod(cbPlanService, "handlePublishLookupUpdates",
+            resp, updatedRequest, null, new HashSet<>(), new HashSet<>(), "plan1", response);
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals("all-scope insert failed", response.getParams().getErr());
+    }
+
+    @Test
+    void testHandlePublishLookupUpdates_RemovedOrgs_CustomScope() {
+        Map<String, Object> resp = Map.of(Constants.RESPONSE, Constants.SUCCESS);
+        Map<String, Object> updatedRequest = new HashMap<>();
+        updatedRequest.put(Constants.ORG_SCOPE, Constants.CUSTOM);
+        ApiResponse bulkResp = new ApiResponse();
+        bulkResp.getParams().setStatus(Constants.SUCCESS);
+        bulkResp.put(Constants.RESPONSE, Constants.SUCCESS);
+        when(cassandraOperation.insertBulkRecord(anyString(), anyString(), anyList())).thenReturn(bulkResp);
+        Set<String> rootOrgIdsInCriteria = new HashSet<>(Set.of("orgA"));
+        Set<String> existingRootOrgIdsInCriteria = new HashSet<>(Set.of("orgA", "orgB"));
+        ApiResponse response = new ApiResponse();
+        response.setParams(new ApiRespParam());
+
+        ReflectionTestUtils.invokeMethod(cbPlanService, "handlePublishLookupUpdates",
+            resp, updatedRequest, Constants.CUSTOM, rootOrgIdsInCriteria, existingRootOrgIdsInCriteria, "plan1", response);
+
+        assertNotEquals(Constants.FAILED, response.getParams().getStatus());
+        verify(cassandraOperation, times(2)).insertBulkRecord(anyString(), anyString(), anyList());
+    }
+
+    @Test
+    void testHandlePublishLookupUpdates_AllPreviously_NewlyAdded_Failure() {
+        Map<String, Object> resp = Map.of(Constants.RESPONSE, Constants.SUCCESS);
+        Map<String, Object> updatedRequest = new HashMap<>();
+        ApiResponse removeResp = new ApiResponse();
+        removeResp.getParams().setStatus(Constants.FAILED);
+        removeResp.getParams().setErr("remove ALL entry failed");
+        when(cassandraOperation.insertRecord(anyString(), anyString(), anyMap())).thenReturn(removeResp);
+        Set<String> rootOrgIdsInCriteria = new HashSet<>(Set.of("orgX"));
+        Set<String> existingRootOrgIdsInCriteria = new HashSet<>();
+        ApiResponse response = new ApiResponse();
+        response.setParams(new ApiRespParam());
+
+        ReflectionTestUtils.invokeMethod(cbPlanService, "handlePublishLookupUpdates",
+            resp, updatedRequest, Constants.ALL, rootOrgIdsInCriteria, existingRootOrgIdsInCriteria, "plan1", response);
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals("remove ALL entry failed", response.getParams().getErr());
+        verify(cassandraOperation, times(1)).insertRecord(anyString(), anyString(), anyMap());
+    }
+
+    @Test
+    void testHandlePublishLookupUpdates_AllPreviously_NothingAdded_NoOp() {
+        Map<String, Object> resp = Map.of(Constants.RESPONSE, Constants.SUCCESS);
+        Map<String, Object> updatedRequest = new HashMap<>();
+        Set<String> rootOrgIdsInCriteria = new HashSet<>(Set.of("orgX"));
+        Set<String> existingRootOrgIdsInCriteria = new HashSet<>(Set.of("orgX"));
+        ApiResponse response = new ApiResponse();
+        response.setParams(new ApiRespParam());
+
+        ReflectionTestUtils.invokeMethod(cbPlanService, "handlePublishLookupUpdates",
+            resp, updatedRequest, Constants.ALL, rootOrgIdsInCriteria, existingRootOrgIdsInCriteria, "plan1", response);
+
+        assertNotEquals(Constants.FAILED, response.getParams().getStatus());
+        verify(cassandraOperation, never()).insertRecord(anyString(), anyString(), anyMap());
+        verify(cassandraOperation, never()).insertBulkRecord(anyString(), anyString(), anyList());
+    }
+
+    // ---- prepareAndValidatePublishRequest (private, via reflection) ----
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void testPrepareAndValidatePublishRequest_LiveWithContextData_ReturnsValidationErrors() {
+        Map<String, Object> existingCbPlan = new HashMap<>();
+        existingCbPlan.put(Constants.DRAFT_DATA, "{\"name\":\"Updated\",\"contextData\":{\"key\":\"value\"}}");
+        Map<String, Object> incomingRequest = new HashMap<>();
+        Map<String, Object> updatedRequest = new HashMap<>();
+        Set<String> rootOrgIdsInCriteria = new HashSet<>();
+        Set<String> existingRootOrgIdsInCriteria = new HashSet<>();
+        ApiResponse response = new ApiResponse();
+        response.setParams(new ApiRespParam());
+
+        when(requestValidator.validateContextData(any(), anyBoolean(), anyString(), any(), anyBoolean()))
+            .thenReturn(List.of("ctx-error"));
+
+        List<String> errors = (List<String>) ReflectionTestUtils.invokeMethod(cbPlanService,
+            "prepareAndValidatePublishRequest", existingCbPlan, incomingRequest, updatedRequest,
+            Constants.LIVE, false, "org1", "user1", false, rootOrgIdsInCriteria, existingRootOrgIdsInCriteria,
+            "plan1", response);
+
+        assertEquals(List.of("ctx-error"), errors);
+        assertTrue(updatedRequest.containsKey(Constants.CONTEXT_DATA_REQUEST));
+        verify(requestValidator, times(2)).validateContextData(any(), anyBoolean(), anyString(), any(), anyBoolean());
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void testPrepareAndValidatePublishRequest_LiveWithoutContextData_SkipsSecondValidation() {
+        Map<String, Object> existingCbPlan = new HashMap<>();
+        existingCbPlan.put(Constants.DRAFT_DATA, "{\"name\":\"Updated\"}");
+        Map<String, Object> incomingRequest = new HashMap<>();
+        Map<String, Object> updatedRequest = new HashMap<>();
+        Set<String> rootOrgIdsInCriteria = new HashSet<>();
+        Set<String> existingRootOrgIdsInCriteria = new HashSet<>();
+        ApiResponse response = new ApiResponse();
+        response.setParams(new ApiRespParam());
+
+        when(requestValidator.validateContextData(any(), anyBoolean(), anyString(), any(), anyBoolean()))
+            .thenReturn(List.of("should-not-be-used"));
+
+        List<String> errors = (List<String>) ReflectionTestUtils.invokeMethod(cbPlanService,
+            "prepareAndValidatePublishRequest", existingCbPlan, incomingRequest, updatedRequest,
+            Constants.LIVE, false, "org1", "user1", false, rootOrgIdsInCriteria, existingRootOrgIdsInCriteria,
+            "plan1", response);
+
+        assertTrue(errors.isEmpty());
+        assertFalse(updatedRequest.containsKey(Constants.CONTEXT_DATA_REQUEST));
+        verify(requestValidator, times(1)).validateContextData(any(), anyBoolean(), anyString(), any(), anyBoolean());
+    }
+
+    @Test
+    void testPublishCbPlan_InvalidStatus_SetsBadRequestAfterOrgResolution() {
+        ApiRequest request = new ApiRequest();
+        Map<String, Object> requestMap = new HashMap<>();
+        requestMap.put(Constants.ID, "planId");
+        request.setRequest(requestMap);
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("u1");
+        Map<String, Object> existingPlan = new HashMap<>();
+        existingPlan.put(Constants.CREATED_BY, "u1");
+        existingPlan.put(Constants.STATUS, "archived");
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), any(), any(), any()))
+            .thenReturn(List.of(existingPlan));
+        when(userUtilityService.readUserProfileFromDB(eq("u1"), anyList()))
+            .thenReturn(Map.of(Constants.ID, "u1", Constants.ROOT_ORG_ID, "root1"));
+        when(userUtilityService.readOrgFromDB(eq("root1"), any()))
+            .thenReturn(Map.of(Constants.IS_CCA, false));
+
+        ApiResponse response = cbPlanService.publishCbPlan(request, "org1", "token", List.of("role"));
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertTrue(response.getParams().getErr().contains("invalid state"));
+    }
+
+    @Test
+    void testPublishCbPlan_DraftStatus_ValidationErrorsReturnBadRequest() {
+        ApiRequest request = new ApiRequest();
+        Map<String, Object> requestMap = new HashMap<>();
+        requestMap.put(Constants.ID, "planId");
+        request.setRequest(requestMap);
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("u1");
+        Map<String, Object> existingPlan = new HashMap<>();
+        existingPlan.put(Constants.CREATED_BY, "u1");
+        existingPlan.put(Constants.STATUS, "draft");
+        existingPlan.put(Constants.END_DATE_REQUEST, "2024-12-31");
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), any(), any(), any()))
+            .thenReturn(List.of(existingPlan));
+        when(userUtilityService.readUserProfileFromDB(eq("u1"), anyList()))
+            .thenReturn(Map.of(Constants.ID, "u1", Constants.ROOT_ORG_ID, "root1"));
+        when(userUtilityService.readOrgFromDB(eq("root1"), any()))
+            .thenReturn(Map.of(Constants.IS_CCA, false));
+        when(requestValidator.validateContextData(any(), anyBoolean(), anyString(), any(), anyBoolean()))
+            .thenReturn(List.of("missing field"));
+
+        ApiResponse response = cbPlanService.publishCbPlan(request, "org1", "token", List.of("role"));
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertTrue(response.getParams().getErr().contains("missing field"));
+    }
+
+    // ---- finalizeOrgScopeForPublish (private, via reflection) ----
+
+    @Test
+    void testFinalizeOrgScopeForPublish_LiveStatus_RemovesRootOrgIdsAndSetsEmptyDraftData() {
+        Map<String, Object> updatedRequest = new HashMap<>();
+        updatedRequest.put(Constants.ROOT_ORG_IDS_IN_CONTEXT_DATA, List.of("org1"));
+        Map<String, Object> existingCbPlan = new HashMap<>();
+
+        ReflectionTestUtils.invokeMethod(cbPlanService, "finalizeOrgScopeForPublish", updatedRequest, existingCbPlan, "live");
+
+        assertFalse(updatedRequest.containsKey(Constants.ROOT_ORG_IDS_IN_CONTEXT_DATA));
+        assertEquals("{}", updatedRequest.get(Constants.DRAFT_DATA));
+    }
+
+    @Test
+    void testFinalizeOrgScopeForPublish_DraftStatus_RestoresExistingOrgScope() {
+        Map<String, Object> updatedRequest = new HashMap<>();
+        Map<String, Object> existingCbPlan = new HashMap<>();
+        existingCbPlan.put(Constants.ORG_SCOPE, "single");
+
+        ReflectionTestUtils.invokeMethod(cbPlanService, "finalizeOrgScopeForPublish", updatedRequest, existingCbPlan, "draft");
+
+        assertEquals("single", updatedRequest.get(Constants.ORG_SCOPE));
+    }
+
+    @Test
+    void testFinalizeOrgScopeForPublish_OtherStatus_NoChanges() {
+        Map<String, Object> updatedRequest = new HashMap<>();
+        updatedRequest.put("marker", "x");
+
+        ReflectionTestUtils.invokeMethod(cbPlanService, "finalizeOrgScopeForPublish", updatedRequest, new HashMap<>(), "archived");
+
+        assertEquals(1, updatedRequest.size());
+        assertEquals("x", updatedRequest.get("marker"));
+    }
+
+    // ---- extractTargetedOrganisation (private, via reflection) ----
+
+    @Test
+    void testExtractTargetedOrganisation_StringValue() {
+        ApiRequest request = new ApiRequest();
+        Map<String, Object> req = new HashMap<>();
+        req.put(Constants.TARGETED_ORGANISATION, "orgXYZ");
+        request.setRequest(req);
+
+        String result = (String) ReflectionTestUtils.invokeMethod(cbPlanService, "extractTargetedOrganisation", request);
+
+        assertEquals("orgXYZ", result);
+    }
+
+    @Test
+    void testExtractTargetedOrganisation_NonStringValue() {
+        ApiRequest request = new ApiRequest();
+        Map<String, Object> req = new HashMap<>();
+        req.put(Constants.TARGETED_ORGANISATION, 12345);
+        request.setRequest(req);
+
+        String result = (String) ReflectionTestUtils.invokeMethod(cbPlanService, "extractTargetedOrganisation", request);
+
+        assertEquals("12345", result);
+    }
+
+    @Test
+    void testExtractTargetedOrganisation_MissingKey() {
+        ApiRequest request = new ApiRequest();
+        request.setRequest(new HashMap<>());
+
+        String result = (String) ReflectionTestUtils.invokeMethod(cbPlanService, "extractTargetedOrganisation", request);
+
+        assertNull(result);
+    }
+
+    // ---- populateReadData (private, via reflection) ----
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void testPopulateReadData_LiveStatusWithValidDraftData_UsesCbPlanDto() {
+        Map<String, Object> cbPlan = new HashMap<>();
+        cbPlan.put(Constants.STATUS, Constants.LIVE);
+        cbPlan.put(Constants.DRAFT_DATA,
+            "{\"name\":\"Draft Plan\",\"contentType\":\"Course\",\"contentList\":[\"c1\"],\"endDate\":\"2024-12-31\",\"isApar\":true}");
+        cbPlan.put(Constants.CREATED_BY, "userId");
+        cbPlan.put(Constants.CREATED_AT_REQ, Instant.now());
+
+        when(contentService.enrichContentInfoForCBPlan(anyList())).thenReturn(List.of(Map.of("id", "c1")));
+
+        Map<String, Object> result = (Map<String, Object>) ReflectionTestUtils.invokeMethod(cbPlanService, "populateReadData", cbPlan);
+
+        assertEquals("Draft Plan", result.get(Constants.NAME));
+        assertEquals(Boolean.TRUE, result.get(Constants.IS_APAR));
+        assertNotNull(result.get(Constants.END_DATE_REQUEST));
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void testPopulateReadData_CreatedByBlank_NoCreatedByNameAdded() {
+        Map<String, Object> cbPlan = new HashMap<>();
+        cbPlan.put(Constants.STATUS, "draft");
+        cbPlan.put(Constants.NAME, "Plan X");
+        cbPlan.put(Constants.CONTENT_TYPE, "Course");
+        cbPlan.put(Constants.CONTENT_LIST, List.of("c1"));
+        cbPlan.put(Constants.CREATED_AT_REQ, Instant.now());
+        cbPlan.put(Constants.CREATED_BY, "");
+        when(contentService.enrichContentInfoForCBPlan(anyList())).thenReturn(Collections.emptyList());
+
+        Map<String, Object> result = (Map<String, Object>) ReflectionTestUtils.invokeMethod(cbPlanService, "populateReadData", cbPlan);
+
+        assertFalse(result.containsKey(Constants.CREATED_BY_NAME));
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void testPopulateReadData_ContextDataValidJson_ParsedAsJsonNode() {
+        Map<String, Object> cbPlan = new HashMap<>();
+        cbPlan.put(Constants.STATUS, "draft");
+        cbPlan.put(Constants.NAME, "Plan X");
+        cbPlan.put(Constants.CONTENT_TYPE, "Course");
+        cbPlan.put(Constants.CONTENT_LIST, List.of("c1"));
+        cbPlan.put(Constants.CREATED_AT_REQ, Instant.now());
+        cbPlan.put(Constants.CONTEXT_DATA_REQUEST, "{\"foo\":\"bar\"}");
+        when(contentService.enrichContentInfoForCBPlan(anyList())).thenReturn(Collections.emptyList());
+
+        Map<String, Object> result = (Map<String, Object>) ReflectionTestUtils.invokeMethod(cbPlanService, "populateReadData", cbPlan);
+
+        assertTrue(result.get(Constants.CONTEXT_DATA_REQUEST) instanceof JsonNode);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void testPopulateReadData_ContextDataInvalidJson_SkipsEnrichment() {
+        Map<String, Object> cbPlan = new HashMap<>();
+        cbPlan.put(Constants.STATUS, "draft");
+        cbPlan.put(Constants.NAME, "Plan X");
+        cbPlan.put(Constants.CONTENT_TYPE, "Course");
+        cbPlan.put(Constants.CONTENT_LIST, List.of("c1"));
+        cbPlan.put(Constants.CREATED_AT_REQ, Instant.now());
+        cbPlan.put(Constants.CONTEXT_DATA_REQUEST, "{invalid-json");
+        when(contentService.enrichContentInfoForCBPlan(anyList())).thenReturn(Collections.emptyList());
+
+        Map<String, Object> result = (Map<String, Object>) ReflectionTestUtils.invokeMethod(cbPlanService, "populateReadData", cbPlan);
+
+        assertFalse(result.containsKey(Constants.CONTEXT_DATA_REQUEST));
+    }
+
+    // ---- enrichSearchResultItem / enrichCreatedByInfo (private, via reflection) ----
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void testEnrichSearchResultItem_NoCreatedByOrContentListKeys_ReturnsCopyUnchanged() {
+        Map<String, Object> item = new HashMap<>();
+        item.put("name", "Plan A");
+
+        Map<String, Object> result = (Map<String, Object>) ReflectionTestUtils.invokeMethod(cbPlanService, "enrichSearchResultItem", item);
+
+        assertEquals("Plan A", result.get("name"));
+        assertFalse(result.containsKey(Constants.CREATED_BY_NAME));
+        verify(contentService, never()).enrichContentInfoForCBPlan(anyList());
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void testEnrichSearchResultItem_CreatedByBlank_SkipsUserLookup() {
+        Map<String, Object> item = new HashMap<>();
+        item.put(Constants.CREATED_BY, "   ");
+
+        Map<String, Object> result = (Map<String, Object>) ReflectionTestUtils.invokeMethod(cbPlanService, "enrichSearchResultItem", item);
+
+        assertFalse(result.containsKey(Constants.CREATED_BY_NAME));
+        verify(userUtilityService, never()).readUserProfile(anyString(), anyList());
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void testEnrichSearchResultItem_UserProfileNull_SkipsEnrichment() {
+        Map<String, Object> item = new HashMap<>();
+        item.put(Constants.CREATED_BY, "user1");
+        when(userUtilityService.readUserProfile(eq("user1"), anyList())).thenReturn(null);
+
+        Map<String, Object> result = (Map<String, Object>) ReflectionTestUtils.invokeMethod(cbPlanService, "enrichSearchResultItem", item);
+
+        assertFalse(result.containsKey(Constants.CREATED_BY_NAME));
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void testEnrichSearchResultItem_ContentListNotAList_SkipsEnrichment() {
+        Map<String, Object> item = new HashMap<>();
+        item.put(Constants.CONTENT_LIST, "not-a-list");
+
+        Map<String, Object> result = (Map<String, Object>) ReflectionTestUtils.invokeMethod(cbPlanService, "enrichSearchResultItem", item);
+
+        assertEquals("not-a-list", result.get(Constants.CONTENT_LIST));
+        verify(contentService, never()).enrichContentInfoForCBPlan(anyList());
+    }
+
+    // ---- retireCbPlan org-scope branches (full flow) ----
+
+    @Test
+    void testRetireCbPlan_AllOrgScope_LookupFailureAfterSuccessfulRetire() {
+        ApiRequest request = new ApiRequest();
+        Map<String, Object> requestMap = new HashMap<>();
+        requestMap.put(Constants.ID, "planId");
+        request.setRequest(requestMap);
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("userId");
+
+        Map<String, Object> existingPlan = new HashMap<>();
+        existingPlan.put("createdBy", "userId");
+        existingPlan.put("status", "live");
+        existingPlan.put("orgScope", Constants.ALL);
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), any(), any(), any()))
+            .thenReturn(List.of(existingPlan));
+
+        Map<String, Object> updateResp = new HashMap<>();
+        updateResp.put(Constants.RESPONSE, Constants.SUCCESS);
+        when(cassandraOperation.updateRecord(anyString(), anyString(), any(), any())).thenReturn(updateResp);
+
+        ApiResponse failInsert = new ApiResponse();
+        failInsert.put(Constants.ERROR_MESSAGE, "cassandra down");
+        when(cassandraOperation.insertRecord(anyString(), anyString(), anyMap())).thenReturn(failInsert);
+
+        ApiResponse response = cbPlanService.retireCbPlan(request, "orgId", "token", List.of("role"));
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
+        assertEquals("cassandra down", response.getParams().getErr());
+    }
+
+    @Test
+    void testRetireCbPlan_CustomOrgScopeWithContentList_SuccessRemovesLookupsAndArchives() {
+        ApiRequest request = new ApiRequest();
+        Map<String, Object> requestMap = new HashMap<>();
+        requestMap.put(Constants.ID, "planId");
+        request.setRequest(requestMap);
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("userId");
+
+        Map<String, Object> contextData = Map.of(Constants.ACCESS_CONTROL, Map.of(
+            Constants.USER_GROUPS, List.of(Map.of(
+                Constants.USER_GROUP_CRITERIA_LIST, List.of(Map.of(
+                    Constants.CRITERIA_KEY, Constants.ROOT_ORG_ID,
+                    Constants.CRITERIA_VALUE, List.of("orgA")
+                ))
+            ))
+        ));
+
+        Map<String, Object> existingPlan = new HashMap<>();
+        existingPlan.put("createdBy", "userId");
+        existingPlan.put("status", "live");
+        existingPlan.put("orgScope", Constants.CUSTOM);
+        existingPlan.put(Constants.CONTENT_LIST, List.of("content1"));
+        existingPlan.put(Constants.CONTEXT_DATA_REQUEST, contextData);
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), any(), any(), any()))
+            .thenReturn(List.of(existingPlan))
+            .thenReturn(Collections.emptyList());
+
+        Map<String, Object> updateResp = new HashMap<>();
+        updateResp.put(Constants.RESPONSE, Constants.SUCCESS);
+        when(cassandraOperation.updateRecord(anyString(), anyString(), any(), any())).thenReturn(updateResp);
+
+        ApiResponse bulkResp = new ApiResponse();
+        bulkResp.getParams().setStatus(Constants.SUCCESS);
+        bulkResp.put(Constants.RESPONSE, Constants.SUCCESS);
+        when(cassandraOperation.insertBulkRecord(anyString(), anyString(), anyList())).thenReturn(bulkResp);
+
+        ApiResponse response = cbPlanService.retireCbPlan(request, "orgId", "token", List.of("role"));
+
+        assertEquals(Constants.UPDATED, response.getResult().get(Constants.STATUS));
+        assertTrue(response.getResult().get(Constants.MESSAGE).toString().contains("Archived cbPlan"));
+    }
+
+    // ===================== Additional tests to close remaining coverage gaps =====================
+
+    // ---- parseEndDate: malformed string hits the catch-all RuntimeException wrap (neither ISO_INSTANT nor yyyy-MM-dd parse) ----
+
+    @Test
+    void testParseEndDate_InvalidString_ThrowsWrappedRuntimeException() {
+        RuntimeException ex = assertThrows(RuntimeException.class, () ->
+            ReflectionTestUtils.invokeMethod(cbPlanService, "parseEndDate", "not-a-valid-date"));
+        assertTrue(ex.getMessage().contains("Invalid endDate format"));
+    }
+
+    // ---- archiveCustomOrgLookup (private, via reflection) - branches not covered by testArchiveCustomOrgLookup ----
+
+    @Test
+    void testArchiveCustomOrgLookup_EmptyOrgIdList_ReturnsFailed() {
+        ApiResponse result = (ApiResponse) ReflectionTestUtils.invokeMethod(
+            cbPlanService, "archiveCustomOrgLookup", "planId", new ArrayList<String>());
+
+        assertNotNull(result);
+        assertEquals(Constants.FAILED, result.getParams().getStatus());
+        assertEquals("orgIdList is empty. Cannot archive lookup entries.", result.getParams().getErr());
+    }
+
+    @Test
+    void testArchiveCustomOrgLookup_CassandraUpdateFails_ReturnsFailed() {
+        Map<String, Object> failResp = new HashMap<>();
+        failResp.put(Constants.RESPONSE, Constants.FAILED);
+        when(cassandraOperation.updateRecord(anyString(), anyString(), any(), any())).thenReturn(failResp);
+
+        ApiResponse result = (ApiResponse) ReflectionTestUtils.invokeMethod(
+            cbPlanService, "archiveCustomOrgLookup", "planId", Arrays.asList("org1"));
+
+        assertNotNull(result);
+        assertEquals(Constants.FAILED, result.getParams().getStatus());
+        assertEquals("Failed to archive record for orgId: org1", result.getParams().getErr());
+    }
+
+    @Test
+    void testArchiveCustomOrgLookup_ExceptionThrown_ReturnsFailed() {
+        when(cassandraOperation.updateRecord(anyString(), anyString(), any(), any()))
+            .thenThrow(new RuntimeException("DB down"));
+
+        ApiResponse result = (ApiResponse) ReflectionTestUtils.invokeMethod(
+            cbPlanService, "archiveCustomOrgLookup", "planId", Arrays.asList("org1"));
+
+        assertNotNull(result);
+        assertEquals(Constants.FAILED, result.getParams().getStatus());
+        assertTrue(result.getParams().getErr().contains("Exception while archiving org lookup entries"));
+    }
+
+    // ---- extractUniqueRootOrgIds / collectRootOrgIdsFromCriteriaList / resolveContextDataForRootOrgExtraction: remaining branches ----
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void testExtractUniqueRootOrgIds_TargetedOrganisationCriteriaKey_Collected() {
+        Map<String, Object> crit = Map.of(Constants.CRITERIA_KEY, Constants.TARGETED_ORGANISATION,
+                Constants.CRITERIA_VALUE, List.of("orgT1", "orgT2"));
+        Map<String, Object> ug = Map.of(Constants.USER_GROUP_CRITERIA_LIST, List.of(crit));
+        Map<String, Object> ac = Map.of(Constants.USER_GROUPS, List.of(ug));
+        Map<String, Object> raw = Map.of(Constants.CONTEXT_DATA_REQUEST, Map.of(Constants.ACCESS_CONTROL, ac));
+
+        Set<String> result = (Set<String>) ReflectionTestUtils.invokeMethod(cbPlanService, "extractUniqueRootOrgIds", raw);
+
+        assertEquals(Set.of("orgT1", "orgT2"), result);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void testExtractUniqueRootOrgIds_ContextDataNeitherStringNorMap_ReturnsEmptySet() {
+        Map<String, Object> raw = new HashMap<>();
+        raw.put(Constants.CONTEXT_DATA_REQUEST, 12345);
+
+        Set<String> result = (Set<String>) ReflectionTestUtils.invokeMethod(cbPlanService, "extractUniqueRootOrgIds", raw);
+
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void testExtractUniqueRootOrgIds_MalformedJsonString_ReturnsEmptySet() {
+        Map<String, Object> raw = new HashMap<>();
+        raw.put(Constants.CONTEXT_DATA_REQUEST, "{not-valid-json");
+
+        Set<String> result = (Set<String>) ReflectionTestUtils.invokeMethod(cbPlanService, "extractUniqueRootOrgIds", raw);
+
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
+    }
+
+    // ---- updateCbPlan (DRAFT status) with changed contentList: exercises the added/deleted content-lookup branch
+    // inside handleUpdateOfDraftCbPlan that no existing test reaches ----
+
+    @Test
+    void testUpdateCbPlan_DraftPlanWithContentListChanges_UpsertsAddedAndRemovesDeletedContentLookup() {
+        ApiRequest request = new ApiRequest();
+        Map<String, Object> updateMap = new HashMap<>();
+        updateMap.put(Constants.ID, "plan1");
+        updateMap.put(Constants.CONTENT_LIST, Arrays.asList("content2", "content3"));
+        request.setRequest(updateMap);
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("u1");
+
+        Map<String, Object> existing = new HashMap<>();
+        existing.put(Constants.CREATED_BY, "u1");
+        existing.put(Constants.STATUS, Constants.DRAFT);
+        existing.put(Constants.CONTENT_LIST, Arrays.asList("content1", "content2"));
+
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), any(), any(), any()))
+            .thenReturn(List.of(existing));
+
+        when(userUtilityService.readUserProfileFromDB(eq("u1"), anyList()))
+            .thenReturn(Map.of(Constants.ID, "u1", Constants.ROOT_ORG_ID, "root1"));
+        when(userUtilityService.readOrgFromDB(eq("root1"), any()))
+            .thenReturn(Map.of(Constants.IS_CCA, false));
+
+        when(requestValidator.validateCbPlanCreateRequest(any(), anyBoolean(), anyString()))
+            .thenReturn(Collections.emptyList());
+
+        Map<String, Object> updateResp = new HashMap<>();
+        updateResp.put(Constants.RESPONSE, Constants.SUCCESS);
+        when(cassandraOperation.updateRecord(anyString(), anyString(), any(), any())).thenReturn(updateResp);
+
+        ApiResponse response = cbPlanService.updateCbPlan(request, "org", "token", Arrays.asList("admin"));
+
+        assertEquals(Constants.UPDATED, response.getResult().get(Constants.STATUS));
+        // Confirms the content-lookup branch (added content "content3") actually ran, not just the plan update.
+        verify(cassandraOperation, atLeastOnce()).updateRecord(eq(Constants.KEYSPACE_SUNBIRD),
+                eq(Constants.TABLE_CB_PLAN_V2_CONTENT_LOOKUP), any(), any());
+    }
+
+    // ---- retireCbPlan: StringUtils.isNoneBlank(comment) true branch (comment actually persisted) ----
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void testRetireCbPlan_WithComment_PersistsCommentOnUpdatedRecord() {
+        ApiRequest request = new ApiRequest();
+        Map<String, Object> requestMap = new HashMap<>();
+        requestMap.put(Constants.ID, "planId");
+        requestMap.put(Constants.COMMENT, "retiring now");
+        request.setRequest(requestMap);
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("userId");
+
+        Map<String, Object> existingPlan = new HashMap<>();
+        existingPlan.put(Constants.CREATED_BY, "userId");
+        existingPlan.put(Constants.STATUS, "live");
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), any(), any(), any()))
+            .thenReturn(Arrays.asList(existingPlan));
+
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        Map<String, Object> updateResp = new HashMap<>();
+        updateResp.put(Constants.RESPONSE, Constants.SUCCESS);
+        when(cassandraOperation.updateRecord(eq(Constants.KEYSPACE_SUNBIRD), eq(Constants.TABLE_CB_PLAN_V2),
+                captor.capture(), any())).thenReturn(updateResp);
+
+        ApiResponse response = cbPlanService.retireCbPlan(request, "orgId", "token", Arrays.asList("role"));
+
+        assertEquals(Constants.UPDATED, response.getResult().get(Constants.STATUS));
+        assertEquals("retiring now", captor.getValue().get(Constants.COMMENT));
     }
 
 }

@@ -5,6 +5,7 @@ import co.elastic.clients.elasticsearch._types.FieldValue;
 import co.elastic.clients.elasticsearch._types.Result;
 import co.elastic.clients.elasticsearch._types.aggregations.*;
 import co.elastic.clients.elasticsearch._types.query_dsl.BoolQuery;
+import co.elastic.clients.elasticsearch.core.GetResponse;
 import co.elastic.clients.elasticsearch.core.IndexResponse;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
 import co.elastic.clients.elasticsearch.core.search.Hit;
@@ -708,5 +709,153 @@ class EsUtilServiceImplTest {
         assertNotNull(result);
     }
 
+    // ---- Additional coverage tests ----
+
+    private GetResponse<Object> buildGetResponse(boolean found, Object source) {
+        return GetResponse.of(b -> {
+            b.index("test-index").id("1").found(found);
+            if (source != null) {
+                b.source(source);
+            }
+            return b;
+        });
+    }
+
+    @Test
+    void testGetDocumentByIdTwoArg_found_delegatesAndReturnsSource() throws Exception {
+        Map<String, Object> source = new HashMap<>();
+        source.put("name", "test");
+
+        when(elasticsearchClient.get(any(java.util.function.Function.class), eq(Object.class)))
+                .thenReturn(buildGetResponse(true, source));
+
+        Map<String, Object> result = esUtilService.getDocumentById("test-index", "1");
+
+        assertEquals(source, result);
+    }
+
+    @Test
+    void testGetDocumentByIdThreeArg_notFound_returnsEmptyMap() throws Exception {
+        when(elasticsearchClient.get(any(java.util.function.Function.class), eq(Object.class)))
+                .thenReturn(buildGetResponse(false, null));
+
+        Map<String, Object> result = esUtilService.getDocumentById(elasticsearchClient, "test-index", "1");
+
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testGetDocumentByIdThreeArg_foundButSourceNotMap_returnsEmptyMap() throws Exception {
+        when(elasticsearchClient.get(any(java.util.function.Function.class), eq(Object.class)))
+                .thenReturn(buildGetResponse(true, "not-a-map"));
+
+        Map<String, Object> result = esUtilService.getDocumentById(elasticsearchClient, "test-index", "1");
+
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testGetDocumentByIdThreeArg_exception_returnsEmptyMap() throws Exception {
+        when(elasticsearchClient.get(any(java.util.function.Function.class), eq(Object.class)))
+                .thenThrow(new RuntimeException("es down"));
+
+        Map<String, Object> result = esUtilService.getDocumentById(elasticsearchClient, "test-index", "1");
+
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testUpdateDocument_existingDocumentFound_mergesAndReturnsUpdated() throws Exception {
+        Map<String, Object> schema = new HashMap<>();
+        schema.put("name", Map.of("type", "text"));
+        when(objectMapper.readValue(any(InputStream.class), any(TypeReference.class)))
+                .thenReturn(schema);
+
+        Map<String, Object> existingSource = new HashMap<>();
+        existingSource.put("name", "old-name");
+        when(elasticsearchClient.get(any(java.util.function.Function.class), eq(Object.class)))
+                .thenReturn(buildGetResponse(true, existingSource));
+
+        when(elasticsearchClient.index(any(co.elastic.clients.elasticsearch.core.IndexRequest.class)))
+                .thenReturn(indexResponse);
+        when(indexResponse.result()).thenReturn(Result.Updated);
+
+        Map<String, Object> updatedDocument = new HashMap<>();
+        updatedDocument.put("name", "new-name");
+
+        String result = esUtilService.updateDocument("test-index", "_doc", "1", updatedDocument, "/test.json");
+
+        assertNotNull(result);
+        assertTrue(result.startsWith("updated:"));
+    }
+
+    @Test
+    void testUpdateDocument_noExistingDocument_createsNew() throws Exception {
+        Map<String, Object> schema = new HashMap<>();
+        schema.put("name", Map.of("type", "text"));
+        when(objectMapper.readValue(any(InputStream.class), any(TypeReference.class)))
+                .thenReturn(schema);
+
+        when(elasticsearchClient.get(any(java.util.function.Function.class), eq(Object.class)))
+                .thenReturn(buildGetResponse(false, null));
+
+        when(elasticsearchClient.index(any(co.elastic.clients.elasticsearch.core.IndexRequest.class)))
+                .thenReturn(indexResponse);
+        when(indexResponse.result()).thenReturn(Result.Created);
+
+        Map<String, Object> updatedDocument = new HashMap<>();
+        updatedDocument.put("name", "new-name");
+
+        String result = esUtilService.updateDocument("test-index", "_doc", "1", updatedDocument, "/test.json");
+
+        assertNotNull(result);
+        assertTrue(result.startsWith("created:"));
+    }
+
+    @Test
+    void testUpdateDocument_getThrowsException_treatedAsUpsertCreated() throws Exception {
+        Map<String, Object> schema = new HashMap<>();
+        schema.put("name", Map.of("type", "text"));
+        when(objectMapper.readValue(any(InputStream.class), any(TypeReference.class)))
+                .thenReturn(schema);
+
+        when(elasticsearchClient.get(any(java.util.function.Function.class), eq(Object.class)))
+                .thenThrow(new RuntimeException("es down"));
+
+        when(elasticsearchClient.index(any(co.elastic.clients.elasticsearch.core.IndexRequest.class)))
+                .thenReturn(indexResponse);
+        when(indexResponse.result()).thenReturn(Result.Created);
+
+        Map<String, Object> updatedDocument = new HashMap<>();
+        updatedDocument.put("name", "new-name");
+
+        String result = esUtilService.updateDocument("test-index", "_doc", "1", updatedDocument, "/test.json");
+
+        assertNotNull(result);
+        assertTrue(result.startsWith("created:"));
+    }
+
+    @Test
+    void testUpdateDocument_foundButSourceNotMap_treatedAsUpsertCreated() throws Exception {
+        Map<String, Object> schema = new HashMap<>();
+        schema.put("name", Map.of("type", "text"));
+        when(objectMapper.readValue(any(InputStream.class), any(TypeReference.class)))
+                .thenReturn(schema);
+
+        when(elasticsearchClient.get(any(java.util.function.Function.class), eq(Object.class)))
+                .thenReturn(buildGetResponse(true, "not-a-map"));
+
+        when(elasticsearchClient.index(any(co.elastic.clients.elasticsearch.core.IndexRequest.class)))
+                .thenReturn(indexResponse);
+        when(indexResponse.result()).thenReturn(Result.Created);
+
+        Map<String, Object> updatedDocument = new HashMap<>();
+        updatedDocument.put("name", "new-name");
+
+        String result = esUtilService.updateDocument("test-index", "_doc", "1", updatedDocument, "/test.json");
+
+        assertNotNull(result);
+        assertTrue(result.startsWith("created:"));
+    }
 
 }

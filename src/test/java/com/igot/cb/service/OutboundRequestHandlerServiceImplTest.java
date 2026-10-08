@@ -550,4 +550,258 @@ class OutboundRequestHandlerServiceImplTest {
         assertTrue(result.isEmpty());
     }
 
+    @Test
+    void testFetchResultUsingPatch_WithDebugEnabled() {
+        String uri = "http://test.com/api/patch";
+        Map<String, Object> request = Map.of("name", "John");
+        Map<String, Object> mockResponse = Map.of("updated", true);
+
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(OutboundRequestHandlerServiceImpl.class);
+        ch.qos.logback.classic.Level originalLevel = logger.getLevel();
+        logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+
+        try {
+            testRestTemplate.setPatchForObjectResponse(mockResponse);
+            Map<String, Object> result = outboundService.fetchResultUsingPatch(uri, request, null);
+            assertNotNull(result);
+            assertEquals(true, result.get("updated"));
+        } finally {
+            logger.setLevel(originalLevel);
+        }
+    }
+
+    // A bean whose getter always throws, used to force a JsonProcessingException
+    // out of ObjectMapper#writeValueAsString during debug-logging serialization.
+    private static class ThrowingBean {
+        public String getValue() {
+            throw new RuntimeException("boom");
+        }
+    }
+
+    @Test
+    void testFetchResultUsingPost_JsonProcessingException() {
+        String uri = "http://test.com/api/post";
+        ThrowingBean request = new ThrowingBean();
+
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(OutboundRequestHandlerServiceImpl.class);
+        ch.qos.logback.classic.Level originalLevel = logger.getLevel();
+        logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+
+        try {
+            Map<String, Object> result = outboundService.fetchResultUsingPost(uri, request, null);
+            assertNull(result);
+        } finally {
+            logger.setLevel(originalLevel);
+        }
+    }
+
+    // ==================== Test cases for fetchResultUsingGet ====================
+
+    @Test
+    void testFetchResultUsingGet_Success_WithHeaders() {
+        String uri = "http://test.com/api/get";
+        Map<String, String> headers = Map.of("Authorization", "Bearer token");
+        Map<String, Object> mockResponse = Map.of("key", "value");
+        ResponseEntity<Map<String, Object>> responseEntity = new ResponseEntity<>(mockResponse, HttpStatus.OK);
+        testRestTemplate.setExchangeResponse(responseEntity);
+
+        Map<String, Object> result = outboundService.fetchResultUsingGet(uri, headers);
+
+        assertNotNull(result);
+        assertEquals("value", result.get("key"));
+    }
+
+    @Test
+    void testFetchResultUsingGet_Success_NoHeaders() {
+        String uri = "http://test.com/api/get";
+        Map<String, Object> mockResponse = Map.of("status", "ok");
+        ResponseEntity<Map<String, Object>> responseEntity = new ResponseEntity<>(mockResponse, HttpStatus.OK);
+        testRestTemplate.setExchangeResponse(responseEntity);
+
+        Map<String, Object> result = outboundService.fetchResultUsingGet(uri, null);
+
+        assertNotNull(result);
+        assertEquals("ok", result.get("status"));
+    }
+
+    @Test
+    void testFetchResultUsingGet_NullBody_ReturnsEmptyMap() {
+        String uri = "http://test.com/api/get";
+        ResponseEntity<Map<String, Object>> responseEntity = new ResponseEntity<>(null, HttpStatus.OK);
+        testRestTemplate.setExchangeResponse(responseEntity);
+
+        Map<String, Object> result = outboundService.fetchResultUsingGet(uri, null);
+
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testFetchResultUsingGet_HttpStatusCodeException_ValidJson() throws Exception {
+        String uri = "http://test.com/api/get";
+        Map<String, Object> errorMap = Map.of("error", "Not Found");
+        String errorJson = objectMapper.writeValueAsString(errorMap);
+        HttpClientErrorException exception = HttpClientErrorException.create(
+                HttpStatus.NOT_FOUND, "Not Found", new HttpHeaders(),
+                errorJson.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+        testRestTemplate.setExceptionToThrow(exception);
+
+        Map<String, Object> result = outboundService.fetchResultUsingGet(uri, null);
+
+        assertNotNull(result);
+        assertEquals("Not Found", result.get("error"));
+    }
+
+    @Test
+    void testFetchResultUsingGet_HttpStatusCodeException_InvalidJson() {
+        String uri = "http://test.com/api/get";
+        String invalidJson = "<html>error</html>";
+        HttpClientErrorException exception = HttpClientErrorException.create(
+                HttpStatus.INTERNAL_SERVER_ERROR, "Server Error", new HttpHeaders(),
+                invalidJson.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+        testRestTemplate.setExceptionToThrow(exception);
+
+        Map<String, Object> result = outboundService.fetchResultUsingGet(uri, null);
+
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testFetchResultUsingGet_GenericException() {
+        String uri = "http://test.com/api/get";
+        testRestTemplate.setExceptionToThrow(new RuntimeException("Connection error"));
+
+        Map<String, Object> result = outboundService.fetchResultUsingGet(uri, null);
+
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testFetchResultUsingGet_WithDebugEnabled() {
+        String uri = "http://test.com/api/get";
+        Map<String, Object> mockResponse = Map.of("key", "value");
+        ResponseEntity<Map<String, Object>> responseEntity = new ResponseEntity<>(mockResponse, HttpStatus.OK);
+
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(OutboundRequestHandlerServiceImpl.class);
+        ch.qos.logback.classic.Level originalLevel = logger.getLevel();
+        logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+
+        try {
+            testRestTemplate.setExchangeResponse(responseEntity);
+            Map<String, Object> result = outboundService.fetchResultUsingGet(uri, Map.of("X-Test", "1"));
+            assertNotNull(result);
+            assertEquals("value", result.get("key"));
+        } finally {
+            logger.setLevel(originalLevel);
+        }
+    }
+
+    // ==================== Test cases for fetchResultUsingDelete ====================
+
+    @Test
+    void testFetchResultUsingDelete_Success_WithHeaders() {
+        String uri = "http://test.com/api/delete";
+        Map<String, Object> request = Map.of("id", 1);
+        Map<String, String> headers = Map.of("Authorization", "Bearer token");
+        Map<String, Object> mockResponse = Map.of("deleted", true);
+        ResponseEntity<Map<String, Object>> responseEntity = new ResponseEntity<>(mockResponse, HttpStatus.OK);
+        testRestTemplate.setExchangeResponse(responseEntity);
+
+        Map<String, Object> result = outboundService.fetchResultUsingDelete(uri, request, headers);
+
+        assertNotNull(result);
+        assertEquals(true, result.get("deleted"));
+    }
+
+    @Test
+    void testFetchResultUsingDelete_Success_NoHeaders() {
+        String uri = "http://test.com/api/delete";
+        Map<String, Object> mockResponse = Map.of("deleted", true);
+        ResponseEntity<Map<String, Object>> responseEntity = new ResponseEntity<>(mockResponse, HttpStatus.OK);
+        testRestTemplate.setExchangeResponse(responseEntity);
+
+        Map<String, Object> result = outboundService.fetchResultUsingDelete(uri, null, null);
+
+        assertNotNull(result);
+        assertEquals(true, result.get("deleted"));
+    }
+
+    @Test
+    void testFetchResultUsingDelete_NullBody_ReturnsNull() {
+        String uri = "http://test.com/api/delete";
+        ResponseEntity<Map<String, Object>> responseEntity = new ResponseEntity<>(null, HttpStatus.OK);
+        testRestTemplate.setExchangeResponse(responseEntity);
+
+        Map<String, Object> result = outboundService.fetchResultUsingDelete(uri, null, null);
+
+        assertNull(result);
+    }
+
+    @Test
+    void testFetchResultUsingDelete_HttpStatusCodeException_ValidJson() throws Exception {
+        String uri = "http://test.com/api/delete";
+        Map<String, Object> errorMap = Map.of("error", "Conflict");
+        String errorJson = objectMapper.writeValueAsString(errorMap);
+        HttpClientErrorException exception = HttpClientErrorException.create(
+                HttpStatus.CONFLICT, "Conflict", new HttpHeaders(),
+                errorJson.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+        testRestTemplate.setExceptionToThrow(exception);
+
+        Map<String, Object> result = outboundService.fetchResultUsingDelete(uri, null, null);
+
+        assertNotNull(result);
+        assertEquals("Conflict", result.get("error"));
+    }
+
+    @Test
+    void testFetchResultUsingDelete_HttpStatusCodeException_InvalidJson() {
+        String uri = "http://test.com/api/delete";
+        String invalidJson = "<html>err</html>";
+        HttpClientErrorException exception = HttpClientErrorException.create(
+                HttpStatus.INTERNAL_SERVER_ERROR, "Fail", new HttpHeaders(),
+                invalidJson.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+        testRestTemplate.setExceptionToThrow(exception);
+
+        Map<String, Object> result = outboundService.fetchResultUsingDelete(uri, null, null);
+
+        assertNull(result);
+    }
+
+    @Test
+    void testFetchResultUsingDelete_GenericException() {
+        String uri = "http://test.com/api/delete";
+        testRestTemplate.setExceptionToThrow(new RuntimeException("Connection error"));
+
+        Map<String, Object> result = outboundService.fetchResultUsingDelete(uri, null, null);
+
+        assertNull(result);
+    }
+
+    @Test
+    void testFetchResultUsingDelete_WithDebugEnabled() {
+        String uri = "http://test.com/api/delete";
+        Map<String, Object> request = Map.of("id", 5);
+        Map<String, Object> mockResponse = Map.of("deleted", true);
+        ResponseEntity<Map<String, Object>> responseEntity = new ResponseEntity<>(mockResponse, HttpStatus.OK);
+
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(OutboundRequestHandlerServiceImpl.class);
+        ch.qos.logback.classic.Level originalLevel = logger.getLevel();
+        logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+
+        try {
+            testRestTemplate.setExchangeResponse(responseEntity);
+            Map<String, Object> result = outboundService.fetchResultUsingDelete(uri, request, Map.of("X-Test", "1"));
+            assertNotNull(result);
+            assertEquals(true, result.get("deleted"));
+        } finally {
+            logger.setLevel(originalLevel);
+        }
+    }
+
 }

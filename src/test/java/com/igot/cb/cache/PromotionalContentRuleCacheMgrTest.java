@@ -188,6 +188,112 @@ class PromotionalContentRuleCacheMgrTest {
         assertEquals(1, bitSet.cardinality());
     }
 
+    @Test
+    void testGetAccessSettingRules_NullCachedEntry_TriggersReload() {
+        List<Map<String, Object>> cassandraRecords = createCassandraRecords(2);
+        mockForEachPromoRules(cassandraRecords);
+        // Prime the cache first via normal path.
+        Collection<CachedAccessSettingRule> firstLoad = cacheMgr.getAccessSettingRules();
+        assertEquals(2, firstLoad.size());
+        // Swap the cache map implementation for one that permits null values,
+        // then inject a null entry to force the null-check branch.
+        cacheMgr.cacheMap = new HashMap<>();
+        cacheMgr.cacheMap.put("null-key", null);
+        reset(cassandraOperation);
+        mockForEachPromoRules(createCassandraRecords(1));
+        Collection<CachedAccessSettingRule> result = cacheMgr.getAccessSettingRules();
+        assertNotNull(result);
+        assertEquals(1, result.size());
+    }
+
+    @Test
+    void testGetAccessSettingRules_ExpiredRule_TriggersReload() {
+        List<Map<String, Object>> cassandraRecords = createCassandraRecords(1);
+        mockForEachPromoRules(cassandraRecords);
+        Collection<CachedAccessSettingRule> firstLoad = cacheMgr.getAccessSettingRules();
+        assertEquals(1, firstLoad.size());
+        // A negative TTL guarantees (now - cachedTimeMillis) > ttl is always true.
+        ReflectionTestUtils.setField(cacheMgr, "promotionalContentRulesCacheExpiryMs", -1);
+        reset(cassandraOperation);
+        mockForEachPromoRules(createCassandraRecords(3));
+        Collection<CachedAccessSettingRule> result = cacheMgr.getAccessSettingRules();
+        assertEquals(3, result.size());
+    }
+
+    @Test
+    void testGetAccessSettingRules_ExpiryCheckThrows_TriggersReload() {
+        List<Map<String, Object>> cassandraRecords = createCassandraRecords(1);
+        mockForEachPromoRules(cassandraRecords);
+        Collection<CachedAccessSettingRule> firstLoad = cacheMgr.getAccessSettingRules();
+        assertEquals(1, firstLoad.size());
+        // Null TTL causes NPE during unboxing inside isExpired(), hitting the catch branch.
+        ReflectionTestUtils.setField(cacheMgr, "promotionalContentRulesCacheExpiryMs", null);
+        reset(cassandraOperation);
+        mockForEachPromoRules(createCassandraRecords(2));
+        Collection<CachedAccessSettingRule> result = cacheMgr.getAccessSettingRules();
+        assertEquals(2, result.size());
+    }
+
+    @Test
+    void testLoadAccessSettingRules_ReachesMaxQuerySize() {
+        when(properties.getPromotionalContentCacheMaxQuerySize()).thenReturn(2);
+        List<Map<String, Object>> cassandraRecords = createCassandraRecords(2);
+        mockForEachPromoRules(cassandraRecords);
+        Collection<CachedAccessSettingRule> result = cacheMgr.getAccessSettingRules();
+        assertNotNull(result);
+        assertEquals(2, result.size());
+    }
+
+    @Test
+    void testProcessAndCacheRule_ExceptionDuringProcessing_IsCaughtAndRuleStillCached() {
+        // accessControlId maps to a String instead of a Map, forcing a ClassCastException
+        // inside processContextData(), which must be caught by processAndCacheRule().
+        String contextData = "{\"accessControlId\":\"not-a-map\"}";
+        Map<String, Object> cassandraRecord = createCassandraRecord("do_bad_cast", "Course", contextData);
+        mockForEachPromoRules(List.of(cassandraRecord));
+        Collection<CachedAccessSettingRule> result = cacheMgr.getAccessSettingRules();
+        assertEquals(1, result.size());
+        CachedAccessSettingRule rule = result.iterator().next();
+        assertEquals("not-a-map", rule.getContextData().get("accessControlId"));
+    }
+
+    @Test
+    void testProcessUserGroup_WithEmptyCriteriaList() {
+        String contextData = "{\"accessControlId\":{\"userGroups\":[{\"userGroupId\":\"group-1\",\"userGroupName\":\"Group 1\",\"userGroupCriteriaList\":[]}]}}";
+        Map<String, Object> cassandraRecord = createCassandraRecord("do_empty_criteria", "Course", contextData);
+        mockForEachPromoRules(List.of(cassandraRecord));
+        Collection<CachedAccessSettingRule> result = cacheMgr.getAccessSettingRules();
+        assertEquals(1, result.size());
+        CachedAccessSettingRule rule = result.iterator().next();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> accessControl = (Map<String, Object>) rule.getContextData().get("accessControlId");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> userGroups = (List<Map<String, Object>>) accessControl.get("userGroups");
+        @SuppressWarnings("unchecked")
+        List<Object> criteriaList = (List<Object>) userGroups.get(0).get("userGroupCriteriaList");
+        assertTrue(criteriaList.isEmpty());
+    }
+
+    @Test
+    void testProcessCriteria_WithMissingCriteriaKey() {
+        String contextData = "{\"accessControlId\":{\"userGroups\":[{\"userGroupId\":\"group-1\",\"userGroupName\":\"Group 1\",\"userGroupCriteriaList\":[{\"criteriaValue\":[\"1\",\"2\"]}]}]}}";
+        Map<String, Object> cassandraRecord = createCassandraRecord("do_missing_key", "Course", contextData);
+        mockForEachPromoRules(List.of(cassandraRecord));
+        Collection<CachedAccessSettingRule> result = cacheMgr.getAccessSettingRules();
+        assertEquals(1, result.size());
+        CachedAccessSettingRule rule = result.iterator().next();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> accessControl = (Map<String, Object>) rule.getContextData().get("accessControlId");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> userGroups = (List<Map<String, Object>>) accessControl.get("userGroups");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> criteriaList = (List<Map<String, Object>>) userGroups.get(0).get("userGroupCriteriaList");
+        Object criteriaValue = criteriaList.get(0).get("criteriaValue");
+        // Since criteriaKey is missing, processCriteria() returns early and never
+        // converts the value into a BitSet.
+        assertFalse(criteriaValue instanceof BitSet);
+    }
+
     private List<Map<String, Object>> createCassandraRecords(int count) {
         List<Map<String, Object>> records = new ArrayList<>();
         for (int i = 0; i < count; i++) {

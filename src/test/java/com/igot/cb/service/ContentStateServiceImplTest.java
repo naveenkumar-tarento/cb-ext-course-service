@@ -321,4 +321,297 @@ class ContentStateServiceImplTest {
                 value
         );
     }
+
+    // ==================== Additional tests: readContentState branches ====================
+
+    @Test
+    void testReadContentState_noFieldsKey() {
+        Map<String, Object> requestMap = new HashMap<>();
+        requestMap.put(Constants.CONTENT_IDS, List.of("c1"));
+        Map<String, Object> requestBody = Map.of(Constants.REQUEST, requestMap);
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("user-1");
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any(), any()))
+                .thenReturn(List.of(Map.of(Constants.USER_ID_LOWER_CASE, "user-1", Constants.RESOURCE_ID, "c1")));
+
+        ApiResponse response = service.readContentState(requestBody, "token");
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        assertTrue(response.getResult().containsKey(Constants.CONTENT_LIST));
+    }
+
+    @Test
+    void testReadContentState_contentIdsEmptyList() {
+        Map<String, Object> requestMap = new HashMap<>();
+        requestMap.put(Constants.CONTENT_IDS, List.of());
+        Map<String, Object> requestBody = Map.of(Constants.REQUEST, requestMap);
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("user-1");
+        ApiResponse response = service.readContentState(requestBody, "token");
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+    }
+
+    @Test
+    void testReadContentState_progressDetailsValidJson() {
+        Map<String, Object> requestMap = new HashMap<>();
+        requestMap.put(Constants.CONTENT_IDS, List.of("c1"));
+        Map<String, Object> requestBody = Map.of(Constants.REQUEST, requestMap);
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("user-1");
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any(), any()))
+                .thenReturn(List.of(Map.of(
+                        Constants.USER_ID_LOWER_CASE, "user-1",
+                        Constants.RESOURCE_ID, "c1",
+                        Constants.PROGRESSDETAILS, "{\"pct\":50}")));
+
+        ApiResponse response = service.readContentState(requestBody, "token");
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+
+        List<?> list = (List<?>) response.getResult().get(Constants.CONTENT_LIST);
+        Map<?, ?> rec = (Map<?, ?>) list.get(0);
+        Object pd = rec.get(Constants.PROGRESSDETAILS);
+        assertTrue(pd instanceof Map);
+        assertTrue(((Map<?, ?>) pd).containsKey("pct"));
+    }
+
+    @Test
+    void testReadContentState_progressDetailsInvalidJson() {
+        Map<String, Object> requestMap = new HashMap<>();
+        requestMap.put(Constants.CONTENT_IDS, List.of("c1"));
+        Map<String, Object> requestBody = Map.of(Constants.REQUEST, requestMap);
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("user-1");
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any(), any()))
+                .thenReturn(List.of(Map.of(
+                        Constants.USER_ID_LOWER_CASE, "user-1",
+                        Constants.RESOURCE_ID, "c1",
+                        Constants.PROGRESSDETAILS, "not-valid-json")));
+
+        ApiResponse response = service.readContentState(requestBody, "token");
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+
+        List<?> list = (List<?>) response.getResult().get(Constants.CONTENT_LIST);
+        Map<?, ?> rec = (Map<?, ?>) list.get(0);
+        assertEquals("not-valid-json", rec.get(Constants.PROGRESSDETAILS));
+    }
+
+    // ==================== Additional tests: updateContentState branches ====================
+
+    @Test
+    void testUpdateContentState_emptyContentsList() {
+        Map<String, Object> requestMap = new HashMap<>();
+        requestMap.put(Constants.CONTENTS, List.of());
+        Map<String, Object> requestBody = Map.of(Constants.REQUEST, requestMap);
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("user-1");
+
+        ApiResponse response = service.updateContentState(requestBody, "token");
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        assertTrue(response.getResult().isEmpty());
+    }
+
+    // ==================== Additional tests: validateContentStateUpdatePayload branches ====================
+
+    @Test
+    void testValidateContentStateUpdatePayload_requestNotMap() {
+        Map<String, Object> requestBody = Map.of(Constants.REQUEST, "notAMap");
+        String result = TestUtils.invokePrivate(service, "validateContentStateUpdatePayload", Map.class, requestBody);
+        assertTrue(result.contains(Constants.REQUEST));
+    }
+
+    @Test
+    void testValidateContentStateUpdatePayload_contentsNotList() {
+        Map<String, Object> requestBody = Map.of(Constants.REQUEST, Map.of(Constants.CONTENTS, "notAList"));
+        String result = TestUtils.invokePrivate(service, "validateContentStateUpdatePayload", Map.class, requestBody);
+        assertTrue(result.contains(Constants.CONTENTS));
+    }
+
+    @Test
+    void testValidateContentStateUpdatePayload_contentsElementNotMap() {
+        Map<String, Object> requestBody = Map.of(Constants.REQUEST, Map.of(Constants.CONTENTS, List.of("notAMap")));
+        String result = TestUtils.invokePrivate(service, "validateContentStateUpdatePayload", Map.class, requestBody);
+        assertTrue(result.contains("contents[0]"));
+    }
+
+    @Test
+    void testValidateContentStateUpdatePayload_valid() {
+        Map<String, Object> content = new HashMap<>();
+        content.put(Constants.CONTENT_ID, "c1");
+        content.put(Constants.STATUS, 1);
+        content.put(Constants.COMPLETION_PERCENTAGE, 10);
+        Map<String, Object> requestBody = Map.of(Constants.REQUEST, Map.of(Constants.CONTENTS, List.of(content)));
+        String result = TestUtils.invokePrivate(service, "validateContentStateUpdatePayload", Map.class, requestBody);
+        assertEquals("", result);
+    }
+
+    // ==================== Additional tests: processContentConsumption branches ====================
+
+    @Test
+    void testProcessContentConsumption_withProgressDetails() throws Exception {
+        Map<String, Object> inputContent = new HashMap<>();
+        inputContent.put(Constants.STATUS, 1);
+        inputContent.put(Constants.COMPLETION_PERCENTAGE, 50);
+        inputContent.put(Constants.CONTENT_ID, "c1");
+        inputContent.put(Constants.PROGRESSDETAILS, Map.of("pct", 50));
+
+        Map<String, Object> result = service.processContentConsumption(inputContent, null, "user-1");
+
+        assertEquals("{\"pct\":50}", result.get(Constants.PROGRESSDETAILS));
+    }
+
+    @Test
+    void testProcessContentConsumption_mergeStatusLessThanTwo() throws Exception {
+        Map<String, Object> inputContent = new HashMap<>();
+        inputContent.put(Constants.STATUS, 1);
+        inputContent.put(Constants.COMPLETION_PERCENTAGE, 30);
+        inputContent.put(Constants.CONTENT_ID, "c1");
+
+        Map<String, Object> existingContent = new HashMap<>();
+        existingContent.put(Constants.STATUS, 0);
+        existingContent.put(Constants.PROGRESS, 10);
+
+        Map<String, Object> result = service.processContentConsumption(inputContent, existingContent, "user-1");
+
+        assertEquals(1, result.get(Constants.STATUS));
+        assertEquals(10, result.get(Constants.PROGRESS));
+        assertFalse(result.containsKey(Constants.LAST_COMPLETED_TIME));
+    }
+
+    @Test
+    void testProcessContentConsumption_existingDateAsDateObject() throws Exception {
+        Map<String, Object> inputContent = new HashMap<>();
+        inputContent.put(Constants.STATUS, 0);
+        inputContent.put(Constants.COMPLETION_PERCENTAGE, 10);
+        inputContent.put(Constants.CONTENT_ID, "c1");
+
+        Date existingDate = new Date();
+        Map<String, Object> existingContent = new HashMap<>();
+        existingContent.put(Constants.STATUS, 0);
+        existingContent.put(Constants.LAST_ACCESS_TIME, existingDate);
+
+        Map<String, Object> result = service.processContentConsumption(inputContent, existingContent, "user-1");
+
+        assertEquals(existingDate.toInstant(), result.get(Constants.LAST_ACCESS_TIME));
+    }
+
+    @Test
+    void testProcessContentConsumption_newContent_incomplete_blankDates() throws Exception {
+        Map<String, Object> inputContent = new HashMap<>();
+        inputContent.put(Constants.STATUS, 1);
+        inputContent.put(Constants.COMPLETION_PERCENTAGE, 20);
+        inputContent.put(Constants.CONTENT_ID, "c1");
+
+        Map<String, Object> result = service.processContentConsumption(inputContent, null, "user-1");
+
+        assertEquals(0, result.get(Constants.PROGRESS));
+        assertTrue(result.get(Constants.LAST_ACCESS_TIME) instanceof Instant);
+        assertFalse(result.containsKey(Constants.LAST_COMPLETED_TIME));
+    }
+
+    // ==================== Tests for readUserContentConsumptionV2 ====================
+
+    private Map<String, Object> validConsumptionRequestMap() {
+        Map<String, Object> requestMap = new HashMap<>();
+        requestMap.put(Constants.USER_ID, "user-1");
+        requestMap.put(Constants.COURSE_ID, "course-1");
+        requestMap.put(Constants.BATCH_ID, "batch-1");
+        return requestMap;
+    }
+
+    @Test
+    void testReadUserContentConsumptionV2_success_withFields() {
+        Map<String, Object> requestMap = validConsumptionRequestMap();
+        requestMap.put(Constants.FIELDS, List.of("userId", "progress"));
+        Map<String, Object> requestBody = Map.of(Constants.REQUEST, requestMap);
+
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any(), any()))
+                .thenReturn(List.of(Map.of(Constants.USER_ID, "user-1", Constants.PROGRESS, 50)));
+
+        ApiResponse response = service.readUserContentConsumptionV2(requestBody);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        assertTrue(response.getResult().containsKey(Constants.CONSUMPTION_RECORDS));
+    }
+
+    @Test
+    void testReadUserContentConsumptionV2_success_noFields() {
+        Map<String, Object> requestMap = validConsumptionRequestMap();
+        Map<String, Object> requestBody = Map.of(Constants.REQUEST, requestMap);
+
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any(), any()))
+                .thenReturn(Collections.emptyList());
+
+        ApiResponse response = service.readUserContentConsumptionV2(requestBody);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        assertTrue(response.getResult().containsKey(Constants.CONSUMPTION_RECORDS));
+    }
+
+    @Test
+    void testReadUserContentConsumptionV2_emptyRequestBody() {
+        ApiResponse response = service.readUserContentConsumptionV2(Collections.emptyMap());
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+    }
+
+    @Test
+    void testReadUserContentConsumptionV2_invalidRequestObject() {
+        Map<String, Object> requestBody = Map.of(Constants.REQUEST, "notAMap");
+        ApiResponse response = service.readUserContentConsumptionV2(requestBody);
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+    }
+
+    @Test
+    void testReadUserContentConsumptionV2_missingMandatoryField() {
+        Map<String, Object> requestMap = new HashMap<>();
+        requestMap.put(Constants.USER_ID, "user-1");
+        requestMap.put(Constants.COURSE_ID, "course-1");
+        // batchId intentionally omitted
+        Map<String, Object> requestBody = Map.of(Constants.REQUEST, requestMap);
+
+        ApiResponse response = service.readUserContentConsumptionV2(requestBody);
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+    }
+
+    @Test
+    void testReadUserContentConsumptionV2_exception() {
+        Map<String, Object> requestMap = validConsumptionRequestMap();
+        Map<String, Object> requestBody = Map.of(Constants.REQUEST, requestMap);
+
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any(), any()))
+                .thenThrow(new RuntimeException("DB error"));
+
+        ApiResponse response = service.readUserContentConsumptionV2(requestBody);
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+    }
+
+    @Test
+    void testReadUserContentConsumptionV2_transformRecord_validJson() {
+        Map<String, Object> requestMap = validConsumptionRequestMap();
+        Map<String, Object> requestBody = Map.of(Constants.REQUEST, requestMap);
+
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any(), any()))
+                .thenReturn(List.of(Map.of(Constants.PROGRESSDETAILS, "{\"done\":true}")));
+
+        ApiResponse response = service.readUserContentConsumptionV2(requestBody);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        List<?> list = (List<?>) response.getResult().get(Constants.CONSUMPTION_RECORDS);
+        Map<?, ?> rec = (Map<?, ?>) list.get(0);
+        assertTrue(rec.get(Constants.PROGRESSDETAILS) instanceof Map);
+    }
+
+    @Test
+    void testReadUserContentConsumptionV2_transformRecord_invalidJson() {
+        Map<String, Object> requestMap = validConsumptionRequestMap();
+        Map<String, Object> requestBody = Map.of(Constants.REQUEST, requestMap);
+
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any(), any()))
+                .thenReturn(List.of(Map.of(Constants.PROGRESSDETAILS, "not-valid-json")));
+
+        ApiResponse response = service.readUserContentConsumptionV2(requestBody);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        List<?> list = (List<?>) response.getResult().get(Constants.CONSUMPTION_RECORDS);
+        Map<?, ?> rec = (Map<?, ?>) list.get(0);
+        assertEquals("not-valid-json", rec.get(Constants.PROGRESSDETAILS));
+    }
 }

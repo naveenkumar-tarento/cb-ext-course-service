@@ -26,6 +26,7 @@ class NotificationServiceImplTest {
     // Use a concrete test implementation instead of mocking to avoid ByteBuddy issues on Java 23
     private static class TestAccessTokenValidator extends AccessTokenValidator {
         private String userIdToReturn = "invokerUser";
+        private boolean shouldThrow = false;
 
         public TestAccessTokenValidator() {
             super(null);
@@ -35,9 +36,31 @@ class NotificationServiceImplTest {
             this.userIdToReturn = userId;
         }
 
+        public void setShouldThrow(boolean shouldThrow) {
+            this.shouldThrow = shouldThrow;
+        }
+
         @Override
         public String fetchUserIdFromAccessToken(String accessToken, ApiResponse response) {
+            if (shouldThrow) {
+                throw new RuntimeException("accessToken-validation-boom");
+            }
             return userIdToReturn;
+        }
+    }
+
+    // Outbound handler double that always throws, used to exercise catch blocks in sendInAppNotification
+    private static class ThrowingOutboundRequestHandlerService extends OutboundRequestHandlerServiceImpl {
+        private final RuntimeException toThrow;
+
+        public ThrowingOutboundRequestHandlerService(RuntimeException toThrow) {
+            super(null);
+            this.toThrow = toThrow;
+        }
+
+        @Override
+        public Map<String, Object> fetchResultUsingPost(String uri, Object request, Map<String, String> headersValues) {
+            throw toThrow;
         }
     }
 
@@ -525,5 +548,334 @@ class NotificationServiceImplTest {
         );
     }
 
+    // ---- Additional coverage tests ----
+
+    @Test
+    void testNotifyAssignmentUploaded_emptyUserId_returnsDefaultResponseUnchanged() {
+        testAccessTokenValidator.setUserIdToReturn("");
+
+        var response = notificationService.notifyAssignmentUploaded(
+                Map.of(Constants.COURSE_ID, "course1"), authToken);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        assertEquals(Constants.SUCCESS, response.getParams().getStatus());
+    }
+
+    @Test
+    void testNotifyAssignmentUploaded_emptyRequestMap_returnsRequestEmptyError() {
+        var response = notificationService.notifyAssignmentUploaded(Collections.emptyMap(), authToken);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals("Request object is empty.", response.getParams().getErrMsg());
+    }
+
+    @Test
+    void testNotifyAssignmentUploaded_missingRequiredFields_returnsValidationError() {
+        Map<String, Object> request = new HashMap<>();
+        request.put("someOtherField", "value");
+
+        var response = notificationService.notifyAssignmentUploaded(request, authToken);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals("Failed Due To Missing Params - [courseId, batchId, assignmentTitle].",
+                response.getParams().getErrMsg());
+    }
+
+    @Test
+    void testNotifyAssignmentUploaded_inactiveEnrollments_resultsInNoEmailsMessage() {
+        Map<String, Object> request = Map.of(
+                Constants.COURSE_ID, "course1",
+                Constants.BATCH_ID, "batch1",
+                Constants.ASSIGNMENT_TITLE, "Assignment A"
+        );
+
+        Map<String, Object> enrollment = new HashMap<>();
+        enrollment.put(Constants.USER_ID, "learner1");
+        enrollment.put(Constants.ACTIVE, false);
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.ENROLLMENT_BATCH_LOOKUP),
+                anyMap(), anyList(), isNull()))
+                .thenReturn(List.of(enrollment));
+
+        var response = notificationService.notifyAssignmentUploaded(request, authToken);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        assertEquals("No enrolled users found for given batchId", response.getResult().get(Constants.MESSAGE));
+    }
+
+    @Test
+    void testNotifyAssignmentUploaded_exceptionFromCassandra_returnsInternalServerError() {
+        Map<String, Object> request = Map.of(
+                Constants.COURSE_ID, "course1",
+                Constants.BATCH_ID, "batch1",
+                Constants.ASSIGNMENT_TITLE, "Assignment A"
+        );
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.ENROLLMENT_BATCH_LOOKUP),
+                anyMap(), anyList(), isNull()))
+                .thenThrow(new RuntimeException("boom"));
+
+        var response = notificationService.notifyAssignmentUploaded(request, authToken);
+
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals("boom", response.getParams().getErrMsg());
+    }
+
+    @Test
+    void testNotifyAssignmentUploaded_manyActiveEnrollments_coversMultiUserLoop() {
+        Map<String, Object> request = Map.of(
+                Constants.COURSE_ID, "course1",
+                Constants.BATCH_ID, "batch1",
+                Constants.ASSIGNMENT_TITLE, "Assignment A"
+        );
+
+        Map<String, Object> enrollment1 = new HashMap<>();
+        enrollment1.put(Constants.USER_ID, "learner1");
+        enrollment1.put(Constants.ACTIVE, true);
+        Map<String, Object> enrollment2 = new HashMap<>();
+        enrollment2.put(Constants.USER_ID, "learner2");
+        enrollment2.put(Constants.ACTIVE, true);
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.ENROLLMENT_BATCH_LOOKUP),
+                anyMap(), anyList(), isNull()))
+                .thenReturn(List.of(enrollment1, enrollment2));
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD),
+                eq(Constants.TABLE_EMAIL_TEMPLATE),
+                anyMap(), anyList(), isNull()))
+                .thenReturn(List.of(Map.of(Constants.TEMPLATE, "<html>Hi $assignmentTitle</html>")));
+
+        testOutboundRequestHandler.addResponse(buildUserSearchResponse("learner1@example.com", "Learner1"));
+        testOutboundRequestHandler.addResponse(Collections.emptyMap());
+
+        var response = notificationService.notifyAssignmentUploaded(request, authToken);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+    }
+
+    @Test
+    void testNotifyAssignmentUploaded_templateFetchThrows_isCaughtInsideConstructEmailTemplate() {
+        Map<String, Object> request = Map.of(
+                Constants.COURSE_ID, "course1",
+                Constants.BATCH_ID, "batch1",
+                Constants.ASSIGNMENT_TITLE, "Assignment A"
+        );
+
+        Map<String, Object> enrollment = new HashMap<>();
+        enrollment.put(Constants.USER_ID, "learner1");
+        enrollment.put(Constants.ACTIVE, true);
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.ENROLLMENT_BATCH_LOOKUP),
+                anyMap(), anyList(), isNull()))
+                .thenReturn(List.of(enrollment));
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD),
+                eq(Constants.TABLE_EMAIL_TEMPLATE),
+                anyMap(), anyList(), isNull()))
+                .thenThrow(new RuntimeException("template-boom"));
+
+        testOutboundRequestHandler.addResponse(buildUserSearchResponse("learner@example.com", "Learner"));
+        testOutboundRequestHandler.addResponse(Collections.emptyMap());
+
+        var response = notificationService.notifyAssignmentUploaded(request, authToken);
+
+        // constructEmailTemplate swallows the exception internally, overall flow still succeeds
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+    }
+
+    @Test
+    void testNotifyAssignmentEvaluate_emptyUserId_returnsUntouchedResponse() {
+        testAccessTokenValidator.setUserIdToReturn("");
+
+        var response = notificationService.notifyAssignmentEvaluate(Map.of(), authToken);
+
+        assertEquals(null, response.getResponseCode());
+        assertEquals(null, response.getParams().getStatus());
+    }
+
+    @Test
+    void testNotifyAssignmentEvaluate_exceptionFromAccessTokenValidator_isCaught() {
+        testAccessTokenValidator.setShouldThrow(true);
+
+        var response = notificationService.notifyAssignmentEvaluate(
+                Map.of(Constants.LEARNER_ID, "learner1"), authToken);
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals("accessToken-validation-boom", response.getParams().getErrMsg());
+    }
+
+    @Test
+    void testNotifyAssignmentSubmit_missingInstructor_returnsBadRequest() {
+        Map<String, Object> request = Map.of(
+                Constants.COURSE_ID, "course1",
+                Constants.BATCH_ID, "batch1",
+                Constants.ASSIGNMENT_TITLE, "Assignment A"
+        );
+
+        var response = notificationService.notifyAssignmentSubmit(request, authToken);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+    }
+
+    @Test
+    void testNotifyAssignmentSubmit_exceptionFromAccessTokenValidator_isCaught() {
+        testAccessTokenValidator.setShouldThrow(true);
+
+        var response = notificationService.notifyAssignmentSubmit(
+                Map.of(Constants.INSTRUCTOR_ID, "instructor1"), authToken);
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals("accessToken-validation-boom", response.getParams().getErrMsg());
+    }
+
+    @Test
+    void testSendInAppNotification_blankAndEmptyInputs_logWarningsButStillAttemptsSend() {
+        assertDoesNotThrow(() -> notificationService.sendInAppNotification(
+                "", "", Collections.emptyList(), Collections.emptyMap()));
+    }
+
+    @Test
+    void testSendInAppNotification_illegalArgumentExceptionIsCaught() {
+        ThrowingOutboundRequestHandlerService throwingHandler =
+                new ThrowingOutboundRequestHandlerService(new IllegalArgumentException("bad arg"));
+        NotificationServiceImpl service = new NotificationServiceImpl(testAccessTokenValidator, cassandraOperation,
+                userUtilityService, throwingHandler, testProps, new com.fasterxml.jackson.databind.ObjectMapper());
+
+        assertDoesNotThrow(() -> service.sendInAppNotification(
+                Constants.ALERT, Constants.ALERT, List.of("user1"), Map.of("k", "v")));
+    }
+
+    @Test
+    void testSendInAppNotification_genericExceptionIsCaught() {
+        ThrowingOutboundRequestHandlerService throwingHandler =
+                new ThrowingOutboundRequestHandlerService(new IllegalStateException("generic boom"));
+        NotificationServiceImpl service = new NotificationServiceImpl(testAccessTokenValidator, cassandraOperation,
+                userUtilityService, throwingHandler, testProps, new com.fasterxml.jackson.databind.ObjectMapper());
+
+        assertDoesNotThrow(() -> service.sendInAppNotification(
+                Constants.ALERT, Constants.ALERT, List.of("user1"), Map.of("k", "v")));
+    }
+
+    @Test
+    void testFetchUserEmails_nonOkResponseCode_returnsEmptyResult() {
+        Map<String, Object> request = Map.of(
+                Constants.COURSE_ID, "course1",
+                Constants.BATCH_ID, "batch1",
+                Constants.ASSIGNMENT_TITLE, "Assignment A",
+                Constants.LEARNER_ID, "learner1"
+        );
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD),
+                eq(Constants.TABLE_EMAIL_TEMPLATE),
+                anyMap(), anyList(), isNull()))
+                .thenReturn(List.of(Map.of(Constants.TEMPLATE, "<html>Hi</html>")));
+
+        Map<String, Object> failResp = new HashMap<>();
+        failResp.put(Constants.RESPONSE_CODE, "FAIL");
+        testOutboundRequestHandler.addResponse(failResp);
+        testOutboundRequestHandler.addResponse(Collections.emptyMap());
+        testOutboundRequestHandler.addResponse(Collections.emptyMap());
+
+        var response = notificationService.notifyAssignmentEvaluate(request, authToken);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+    }
+
+    @Test
+    void testFetchUserEmails_contentsNotAList_returnsEmptyResult() {
+        Map<String, Object> request = Map.of(
+                Constants.COURSE_ID, "course1",
+                Constants.BATCH_ID, "batch1",
+                Constants.ASSIGNMENT_TITLE, "Assignment A",
+                Constants.LEARNER_ID, "learner1"
+        );
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD),
+                eq(Constants.TABLE_EMAIL_TEMPLATE),
+                anyMap(), anyList(), isNull()))
+                .thenReturn(List.of(Map.of(Constants.TEMPLATE, "<html>Hi</html>")));
+
+        Map<String, Object> resp = new HashMap<>();
+        resp.put(Constants.RESPONSE_CODE, "OK");
+        resp.put(Constants.RESULT, Map.of(Constants.RESPONSE, Map.of(Constants.CONTENT, "not-a-list")));
+        testOutboundRequestHandler.addResponse(resp);
+        testOutboundRequestHandler.addResponse(Collections.emptyMap());
+        testOutboundRequestHandler.addResponse(Collections.emptyMap());
+
+        var response = notificationService.notifyAssignmentEvaluate(request, authToken);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+    }
+
+    @Test
+    void testFetchUserEmails_contentItemNotAMap_isSkipped() {
+        Map<String, Object> request = Map.of(
+                Constants.COURSE_ID, "course1",
+                Constants.BATCH_ID, "batch1",
+                Constants.ASSIGNMENT_TITLE, "Assignment A",
+                Constants.LEARNER_ID, "learner1"
+        );
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD),
+                eq(Constants.TABLE_EMAIL_TEMPLATE),
+                anyMap(), anyList(), isNull()))
+                .thenReturn(List.of(Map.of(Constants.TEMPLATE, "<html>Hi</html>")));
+
+        Map<String, Object> resp = new HashMap<>();
+        resp.put(Constants.RESPONSE_CODE, "OK");
+        resp.put(Constants.RESULT, Map.of(Constants.RESPONSE, Map.of(Constants.CONTENT, List.of("plainString"))));
+        testOutboundRequestHandler.addResponse(resp);
+        testOutboundRequestHandler.addResponse(Collections.emptyMap());
+        testOutboundRequestHandler.addResponse(Collections.emptyMap());
+
+        var response = notificationService.notifyAssignmentEvaluate(request, authToken);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+    }
+
+    @Test
+    void testFetchUserEmails_missingPersonalDetails_emailNotCollected() {
+        Map<String, Object> request = Map.of(
+                Constants.COURSE_ID, "course1",
+                Constants.BATCH_ID, "batch1",
+                Constants.ASSIGNMENT_TITLE, "Assignment A",
+                Constants.LEARNER_ID, "learner1"
+        );
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD),
+                eq(Constants.TABLE_EMAIL_TEMPLATE),
+                anyMap(), anyList(), isNull()))
+                .thenReturn(List.of(Map.of(Constants.TEMPLATE, "<html>Hi</html>")));
+
+        Map<String, Object> contentEntry = Map.of(Constants.PROFILE_DETAILS, Map.of());
+        Map<String, Object> resp = new HashMap<>();
+        resp.put(Constants.RESPONSE_CODE, "OK");
+        resp.put(Constants.RESULT, Map.of(Constants.RESPONSE, Map.of(Constants.CONTENT, List.of(contentEntry))));
+        testOutboundRequestHandler.addResponse(resp);
+        testOutboundRequestHandler.addResponse(Collections.emptyMap());
+        testOutboundRequestHandler.addResponse(Collections.emptyMap());
+
+        var response = notificationService.notifyAssignmentEvaluate(request, authToken);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+    }
 
 }

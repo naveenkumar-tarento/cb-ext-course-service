@@ -369,4 +369,134 @@ class AccessSettingsServiceImplTest {
     assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
     assertTrue(response.getParams().getErrMsg().contains("Failed to delete access settings"));
   }
+
+  // ---- adminUpsert coverage tests ----
+
+  @Test
+  void testAdminUpsert_NullUserGroupDetails() {
+    ApiResponse response = service.adminUpsert(null);
+    assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+    assertEquals(Constants.FAILED, response.getParams().getStatus());
+    assertTrue(response.getParams().getErrMsg().contains("cannot be null or empty"));
+  }
+
+  @Test
+  void testAdminUpsert_EmptyUserGroupDetails() {
+    ApiResponse response = service.adminUpsert(new HashMap<>());
+    assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+    assertEquals(Constants.FAILED, response.getParams().getStatus());
+    assertTrue(response.getParams().getErrMsg().contains("cannot be null or empty"));
+  }
+
+  @Test
+  void testAdminUpsert_ValidationErrorFromUserGroupCriteria() {
+    Map<String, Object> details = new HashMap<>();
+    details.put(Constants.CONTENT_ID, "cid");
+
+    Map<String, Object> criteria = new HashMap<>();
+    criteria.put(Constants.CRITERIA_KEY, null);
+    criteria.put(Constants.CRITERIA_VALUE, "value");
+    Map<String, Object> userGroup = new HashMap<>();
+    userGroup.put(Constants.USER_GROUP_CRITERIA_LIST, List.of(criteria));
+    Map<String, Object> accessControl = new HashMap<>();
+    accessControl.put(Constants.USER_GROUPS, List.of(userGroup));
+    details.put(Constants.ACCESS_CONTROL, accessControl);
+
+    ApiResponse response = service.adminUpsert(details);
+
+    assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+    assertEquals(Constants.FAILED, response.getParams().getStatus());
+    assertEquals("Criteria key and value must not be empty", response.getParams().getErrMsg());
+    verifyNoInteractions(accessSettingMigrationService);
+  }
+
+  @Test
+  void testAdminUpsert_Success() throws Exception {
+    Map<String, Object> details = new HashMap<>();
+    details.put(Constants.CONTENT_ID, "cid");
+
+    Map<String, Object> criteria = new HashMap<>();
+    criteria.put(Constants.CRITERIA_KEY, "designation");
+    criteria.put(Constants.CRITERIA_VALUE, "Post Master");
+    Map<String, Object> userGroup = new HashMap<>();
+    userGroup.put(Constants.USER_GROUP_ID, "existing-id");
+    userGroup.put(Constants.USER_GROUP_CRITERIA_LIST, List.of(criteria));
+    List<Map<String, Object>> userGroups = new ArrayList<>();
+    userGroups.add(userGroup);
+    Map<String, Object> accessControl = new HashMap<>();
+    accessControl.put(Constants.USER_GROUPS, userGroups);
+    details.put(Constants.ACCESS_CONTROL, accessControl);
+
+    when(accessSettingMigrationService.processAccessSettingRule(anyMap())).thenReturn(true);
+    when(cassandraOperation.insertRecord(anyString(), anyString(), anyMap())).thenReturn(null);
+
+    ApiResponse response = service.adminUpsert(details);
+
+    assertEquals(HttpStatus.OK, response.getResponseCode());
+    assertEquals(Constants.CREATED_RULES, response.getResult().get(Constants.MSG));
+    assertEquals(accessControl, response.getResult().get(Constants.ACCESS_CONTROL));
+  }
+
+  @Test
+  void testAdminUpsert_ProcessRuleFails_returnsInternalServerError() throws Exception {
+    Map<String, Object> details = new HashMap<>();
+    details.put(Constants.CONTENT_ID, "cid");
+    details.put(Constants.ACCESS_CONTROL, new HashMap<>());
+
+    when(accessSettingMigrationService.processAccessSettingRule(anyMap())).thenReturn(false);
+
+    ApiResponse response = service.adminUpsert(details);
+
+    assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
+    assertEquals(Constants.FAILED, response.getParams().getStatus());
+    assertTrue(response.getParams().getErrMsg().contains("Failed to process access setting rule to id-map"));
+  }
+
+  @Test
+  void testAdminUpsert_Exception_returnsInternalServerError() throws Exception {
+    Map<String, Object> details = new HashMap<>();
+    details.put(Constants.CONTENT_ID, "cid");
+    details.put(Constants.ACCESS_CONTROL, new HashMap<>());
+
+    when(accessSettingMigrationService.processAccessSettingRule(anyMap())).thenReturn(true);
+    doThrow(new RuntimeException("db error")).when(cassandraOperation).insertRecord(anyString(), anyString(), anyMap());
+
+    ApiResponse response = service.adminUpsert(details);
+
+    assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
+    assertEquals(Constants.FAILED, response.getParams().getStatus());
+    assertTrue(response.getParams().getErrMsg().contains("Failed to create access settings"));
+  }
+
+  @Test
+  void testAdminUpsert_AccessControlNotAMap_skipsValidationAndSucceeds() throws Exception {
+    Map<String, Object> details = new HashMap<>();
+    details.put(Constants.CONTENT_ID, "cid");
+    details.put(Constants.ACCESS_CONTROL, "not-a-map");
+
+    when(accessSettingMigrationService.processAccessSettingRule(anyMap())).thenReturn(true);
+    when(cassandraOperation.insertRecord(anyString(), anyString(), anyMap())).thenReturn(null);
+
+    ApiResponse response = service.adminUpsert(details);
+
+    assertEquals(HttpStatus.OK, response.getResponseCode());
+    assertEquals(Constants.CREATED_RULES, response.getResult().get(Constants.MSG));
+  }
+
+  @Test
+  void testAdminUpsert_UserGroupsNotAList_skipsValidationAndSucceeds() throws Exception {
+    Map<String, Object> details = new HashMap<>();
+    details.put(Constants.CONTENT_ID, "cid");
+    Map<String, Object> accessControl = new HashMap<>();
+    accessControl.put(Constants.USER_GROUPS, "not-a-list");
+    details.put(Constants.ACCESS_CONTROL, accessControl);
+
+    when(accessSettingMigrationService.processAccessSettingRule(anyMap())).thenReturn(true);
+    when(cassandraOperation.insertRecord(anyString(), anyString(), anyMap())).thenReturn(null);
+
+    ApiResponse response = service.adminUpsert(details);
+
+    assertEquals(HttpStatus.OK, response.getResponseCode());
+    assertEquals(Constants.CREATED_RULES, response.getResult().get(Constants.MSG));
+  }
 }

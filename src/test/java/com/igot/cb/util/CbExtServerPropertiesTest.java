@@ -94,4 +94,59 @@ class CbExtServerPropertiesTest {
     assertEquals("http://wrapper-host", properties.getCbWrapperNotificationHost());
     assertEquals("/wrapper-path", properties.getCbWrapperNotificationPath());
 }
+
+    @Test
+    void testRemainingLombokGeneratedGettersAndSetters() {
+        CbExtServerProperties properties = new CbExtServerProperties();
+
+        properties.setOrgEligibilityIndex("orgEligIndex");
+        properties.setElasticOrgEligibilityJsonPath("orgEligJsonPath");
+        properties.setPromotionalContentCacheMaxSize(5000);
+        properties.setPromotionalContentCacheWarmingEnabled(true);
+        properties.setPromotionalContentCacheBatchSize(500);
+        properties.setPromotionalContentCacheMaxQuerySize(10000);
+        properties.setExternalTrainingBulkUploadTable("bulkUploadTable");
+        properties.setExternalTrainingBulkUploadTopic("bulkUploadTopic");
+        properties.setExternalTrainingBulkUploadTopicGroup("bulkUploadTopicGroup");
+        properties.setExternalTrainingBulkUploadContainerName("bulkUploadContainer");
+        properties.setBulkUploadCsvDelimiter(',');
+        properties.setExternalTrainingEnrolmentsTableName("enrolmentsTable");
+        properties.setCloudContainerName("cloudContainer");
+        properties.setCloudStorageTypeName("cloudStorageType");
+        properties.setCloudStorageKey("cloudStorageKey");
+        properties.setCloudStorageSecret("cloudStorageSecret");
+        properties.setCloudStorageEndpoint("cloudStorageEndpoint");
+        properties.setUserCompetencyMappingEventTopic("competencyMappingTopic");
+        properties.setUserIssueCertificateForEventTopic("issueCertificateTopic");
+        properties.setExternalTrainingEnrolmentBatchLookupTableName("enrolmentBatchLookupTable");
+        properties.setExternalTrainingUserBulkUploadSampleFileName("sampleFile.csv");
+        properties.setExternalTrainingDefaultPosterImage("posterImage.png");
+        properties.setDomainHost("http://domain-host");
+        properties.setExternalTrainingBatchSize(250);
+
+        assertEquals("orgEligIndex", properties.getOrgEligibilityIndex());
+        assertEquals("orgEligJsonPath", properties.getElasticOrgEligibilityJsonPath());
+        assertEquals(5000, properties.getPromotionalContentCacheMaxSize());
+        assertTrue(properties.isPromotionalContentCacheWarmingEnabled());
+        assertEquals(500, properties.getPromotionalContentCacheBatchSize());
+        assertEquals(10000, properties.getPromotionalContentCacheMaxQuerySize());
+        assertEquals("bulkUploadTable", properties.getExternalTrainingBulkUploadTable());
+        assertEquals("bulkUploadTopic", properties.getExternalTrainingBulkUploadTopic());
+        assertEquals("bulkUploadTopicGroup", properties.getExternalTrainingBulkUploadTopicGroup());
+        assertEquals("bulkUploadContainer", properties.getExternalTrainingBulkUploadContainerName());
+        assertEquals(',', properties.getBulkUploadCsvDelimiter());
+        assertEquals("enrolmentsTable", properties.getExternalTrainingEnrolmentsTableName());
+        assertEquals("cloudContainer", properties.getCloudContainerName());
+        assertEquals("cloudStorageType", properties.getCloudStorageTypeName());
+        assertEquals("cloudStorageKey", properties.getCloudStorageKey());
+        assertEquals("cloudStorageSecret", properties.getCloudStorageSecret());
+        assertEquals("cloudStorageEndpoint", properties.getCloudStorageEndpoint());
+        assertEquals("competencyMappingTopic", properties.getUserCompetencyMappingEventTopic());
+        assertEquals("issueCertificateTopic", properties.getUserIssueCertificateForEventTopic());
+        assertEquals("enrolmentBatchLookupTable", properties.getExternalTrainingEnrolmentBatchLookupTableName());
+        assertEquals("sampleFile.csv", properties.getExternalTrainingUserBulkUploadSampleFileName());
+        assertEquals("posterImage.png", properties.getExternalTrainingDefaultPosterImage());
+        assertEquals("http://domain-host", properties.getDomainHost());
+        assertEquals(250, properties.getExternalTrainingBatchSize());
+    }
 }
