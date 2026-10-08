@@ -50,13 +50,9 @@ class ExternalTrainingBulkUploadConsumerTest {
     @BeforeEach
     void setup() throws Exception {
 
-        consumer = Mockito.spy(new ExternalTrainingBulkUploadConsumer(notificationService));
+        consumer = Mockito.spy(new ExternalTrainingBulkUploadConsumer(notificationService, props, cassandraOperation,
+                storageService, outboundService, null, certService, null));
 
-        inject("cassandraOperation", cassandraOperation);
-        inject("storageService", storageService);
-        inject("outboundRequestHandlerService", outboundService);
-        inject("serverProperties", props);
-        inject("externalTrainingCertificateService", certService);
         inject("objectMapper", new ObjectMapper());
     }
 

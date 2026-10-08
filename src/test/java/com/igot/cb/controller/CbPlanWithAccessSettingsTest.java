@@ -39,7 +39,7 @@ class CbPlanWithAccessSettingsTest {
     private CbPlanWithAccessSettings controller;
 
     @Test
-    void testCreateCbPlan() throws Exception {
+    void testCreateCbPlan() {
         ApiRequest request = new ApiRequest();
         request.setRequest(new HashMap<>());
         
@@ -56,7 +56,7 @@ class CbPlanWithAccessSettingsTest {
     }
 
     @Test
-    void testUpdateCbPlan() throws Exception {
+    void testUpdateCbPlan() {
         ApiRequest request = new ApiRequest();
         Map<String, Object> requestMap = new HashMap<>();
         requestMap.put(Constants.ID, "plan123");
@@ -75,7 +75,7 @@ class CbPlanWithAccessSettingsTest {
     }
 
     @Test
-    void testPublishCbPlan() throws Exception {
+    void testPublishCbPlan() {
         ApiRequest request = new ApiRequest();
         Map<String, Object> requestMap = new HashMap<>();
         requestMap.put(Constants.ID, "plan123");
@@ -94,7 +94,7 @@ class CbPlanWithAccessSettingsTest {
     }
 
     @Test
-    void testReadCbPlan() throws Exception {
+    void testReadCbPlan() {
         ApiResponse mockResponse = new ApiResponse();
         mockResponse.getParams().setStatus(Constants.SUCCESS);
         mockResponse.setResponseCode(HttpStatus.OK);
@@ -125,7 +125,7 @@ class CbPlanWithAccessSettingsTest {
     }
 
     @Test
-    void testSearchCbPlan() throws Exception {
+    void testSearchCbPlan() {
         SearchCriteria criteria = new SearchCriteria();
         
         ApiResponse mockResponse = new ApiResponse();
@@ -141,7 +141,7 @@ class CbPlanWithAccessSettingsTest {
     }
 
     @Test
-    void testRetireCbPlan() throws Exception {
+    void testRetireCbPlan() {
         ApiRequest request = new ApiRequest();
         Map<String, Object> requestMap = new HashMap<>();
         requestMap.put(Constants.ID, "plan123");
@@ -160,7 +160,7 @@ class CbPlanWithAccessSettingsTest {
     }
 
     @Test
-    void testGetCBPlanListForUser() throws Exception {
+    void testGetCBPlanListForUser() {
         ApiResponse mockResponse = new ApiResponse();
         mockResponse.getParams().setStatus(Constants.SUCCESS);
         mockResponse.setResponseCode(HttpStatus.OK);

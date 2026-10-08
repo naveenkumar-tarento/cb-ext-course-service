@@ -26,8 +26,7 @@ class UserUtilityServiceimplTest {
 
     @BeforeEach
     void setUp() {
-        userUtilityService = new UserUtilityServiceimpl(cassandraOperation);
-        userUtilityService.decryptService = decryptService;
+        userUtilityService = new UserUtilityServiceimpl(cassandraOperation, decryptService);
     }
 
     @Test

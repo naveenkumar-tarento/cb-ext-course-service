@@ -10,7 +10,6 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.http.HttpHeaders;
 import org.apache.velocity.VelocityContext;
 import org.apache.velocity.app.VelocityEngine;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
@@ -34,23 +33,28 @@ public class NotificationServiceImpl implements NotificationService {
     private static final String IN_APP_RETIREMENT_NOTIFICATION_SENT_LOG = "In-app retirement notification [{}] sent for course {}";
     private static final String ERROR_SENDING_IN_APP_RETIREMENT_NOTIFICATION = "Error while sending in-app retirement notification";
 
-    @Autowired
-    private AccessTokenValidator accessTokenValidator;
+    private final AccessTokenValidator accessTokenValidator;
 
-    @Autowired
-    private CassandraOperation cassandraOperation;
+    private final CassandraOperation cassandraOperation;
 
-    @Autowired
-    private UserUtilityService userUtilityService; // kept as fallback
+    private final UserUtilityService userUtilityService; // kept as fallback
 
-    @Autowired
-    private OutboundRequestHandlerServiceImpl outboundRequestHandlerService;
+    private final OutboundRequestHandlerServiceImpl outboundRequestHandlerService;
 
-    @Autowired
-    private CbExtServerProperties props;
+    private final CbExtServerProperties props;
 
-    @Autowired
-    private ObjectMapper objectMapper;
+    private final ObjectMapper objectMapper;
+
+    public NotificationServiceImpl(AccessTokenValidator accessTokenValidator, CassandraOperation cassandraOperation,
+            UserUtilityService userUtilityService, OutboundRequestHandlerServiceImpl outboundRequestHandlerService,
+            CbExtServerProperties props, ObjectMapper objectMapper) {
+        this.accessTokenValidator = accessTokenValidator;
+        this.cassandraOperation = cassandraOperation;
+        this.userUtilityService = userUtilityService;
+        this.outboundRequestHandlerService = outboundRequestHandlerService;
+        this.props = props;
+        this.objectMapper = objectMapper;
+    }
 
     @Override
     public ApiResponse notifyAssignmentUploaded(Map<String, Object> requestData, String authToken) {

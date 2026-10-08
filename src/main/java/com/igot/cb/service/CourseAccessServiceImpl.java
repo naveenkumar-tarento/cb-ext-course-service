@@ -9,11 +9,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.igot.cb.cache.RedisCacheMgr;
-import com.igot.cb.cassandra.CassandraOperation;
-import com.igot.cb.cassandra.exceptions.CustomException;
 import org.apache.commons.collections4.MapUtils;
-import org.apache.kafka.common.protocol.types.Field;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -48,9 +44,7 @@ public class CourseAccessServiceImpl {
     private final OutboundRequestHandlerServiceImpl outboundRequestHandlerService;
     private final ObjectMapper objectMapper;
     private final CbPlanLearnerServiceImpl cbPlanLearnerService;
-
-    @Autowired
-    private RedisCacheMgr redisCacheMgr;
+    private final RedisCacheMgr redisCacheMgr;
 
 
     @Value("${content.read.fields}")
@@ -117,7 +111,7 @@ public class CourseAccessServiceImpl {
      * @param accessSettingRuleCacheMgr Cache manager for access setting rules.
      */
     public CourseAccessServiceImpl(AccessTokenValidator accessTokenValidator,
-                                   UserAndOrgServiceImpl userProfileServiceImpl, AccessSettingRuleCacheMgr accessSettingRuleCacheMgr, ContentInfoServiceImpl contentService, OutboundRequestHandlerServiceImpl outboundRequestHandlerService1, CbPlanLearnerServiceImpl cbPlanLearnerService, CassandraOperation cassandraOperation) {
+                                   UserAndOrgServiceImpl userProfileServiceImpl, AccessSettingRuleCacheMgr accessSettingRuleCacheMgr, ContentInfoServiceImpl contentService, OutboundRequestHandlerServiceImpl outboundRequestHandlerService1, CbPlanLearnerServiceImpl cbPlanLearnerService, RedisCacheMgr redisCacheMgr) {
         this.accessTokenValidator = accessTokenValidator;
         this.userProfileServiceImpl = userProfileServiceImpl;
         this.accessSettingRuleCacheMgr = accessSettingRuleCacheMgr;
@@ -125,6 +119,7 @@ public class CourseAccessServiceImpl {
         this.outboundRequestHandlerService = outboundRequestHandlerService1;
         this.objectMapper = new ObjectMapper();
         this.cbPlanLearnerService = cbPlanLearnerService;
+        this.redisCacheMgr = redisCacheMgr;
     }
 
     /**
@@ -287,10 +282,10 @@ public class CourseAccessServiceImpl {
         if (userId == null) {
             return response;
         }
-        return getAssignedCoursesForUserByAdmin(userId, request, authToken);
+        return getAssignedCoursesForUserByAdmin(userId, request);
     }
 
-    public ApiResponse getAssignedCoursesForUserByAdmin(String userId, Map<String, Object> request, String authToken) {
+    public ApiResponse getAssignedCoursesForUserByAdmin(String userId, Map<String, Object> request) {
         log.info("CourseAccessServiceImpl::getAssignedCoursesForUserByAdmin:inside");
         ApiResponse response = ApiResponse.createDefaultResponse(API_COURSE_ACCESS_GET_COURSES_FOR_USER);
         try {
@@ -731,9 +726,9 @@ public class CourseAccessServiceImpl {
                             .toList();
                 }
             }
-            java.util.List<String> learningPathwayIds = getAssignedCourseCount(userId, Constants.LEARNING_PATHWAY, authToken);
+            java.util.List<String> learningPathwayIds = getAssignedCourseCount(userId, Constants.LEARNING_PATHWAY);
             Map<String, Map<String, Object>> enrolmentDictionary = callEnrolmentDictionaryApi(authToken);
-            List<String> caProgramIds = getFilteredCaProgramIdentifiers(userId, authToken, enrolmentDictionary);
+            List<String> caProgramIds = getFilteredCaProgramIdentifiers(userId, enrolmentDictionary);
             int caProgramCount = caProgramIds.size();
             List<String> standaloneAssessmentIds = getStandaloneAssessmentIdentifiersFromSystem();
             Map<String, Map<String, Object>> enrollmentDetails = callAssessmentEnrollmentDetailsApi(
@@ -830,11 +825,11 @@ public class CourseAccessServiceImpl {
         return moderatedContent;
     }
 
-    private List<String> getAssignedCourseCount(String userId, String courseCategory, String authToken) {
+    private List<String> getAssignedCourseCount(String userId, String courseCategory) {
         try {
             Map<String, Object> request = new HashMap<>();
             request.put(Constants.COURSE_CATEGORY, courseCategory);
-            ApiResponse response = getAssignedCoursesForUserByAdmin(userId, request, authToken);
+            ApiResponse response = getAssignedCoursesForUserByAdmin(userId, request);
             if (response != null && response.getResult() != null) {
                 List<Map<String, Object>> courses = (List<Map<String, Object>>)
                         response.getResult().get(Constants.CONTENT);
@@ -976,7 +971,6 @@ public class CourseAccessServiceImpl {
 
     private List<String> getFilteredCaProgramIdentifiers(
             String userId,
-            String authToken,
             Map<String, Map<String, Object>> enrolmentDictionary) {
 
         try {
@@ -985,7 +979,7 @@ public class CourseAccessServiceImpl {
                     Constants.COURSE_CATEGORY_COMPREHENSIVE_ASSESSMENT_PROGRAM);
 
             ApiResponse response =
-                    getAssignedCoursesForUserByAdmin(userId, request, authToken);
+                    getAssignedCoursesForUserByAdmin(userId, request);
 
             if (response == null || response.getResult() == null) {
                 return Collections.emptyList();

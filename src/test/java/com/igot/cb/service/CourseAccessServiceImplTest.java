@@ -10,7 +10,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.igot.cb.cache.IdMapCacheMgr;
-import com.igot.cb.cassandra.CassandraOperation;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -57,23 +56,14 @@ class CourseAccessServiceImplTest {
     @Mock
     private IdMapCacheMgr idMapCacheMgr;
 
-    @Mock
-    private CassandraOperation cassandraOperation;
-
-
     @BeforeEach
     void setUp() throws Exception {
         courseAccessService = new CourseAccessServiceImpl(
-            mockAccessTokenValidator, 
+            mockAccessTokenValidator,
             mockUserProfileService,
-            mockAccessSettingRuleCacheMgr, contentInfoService, outboundRequestHandlerService, cbPlanLearnerServiceImpl, cassandraOperation
+            mockAccessSettingRuleCacheMgr, contentInfoService, outboundRequestHandlerService, cbPlanLearnerServiceImpl, redisCacheMgr
         );
-        
-        // Inject the mocked RedisCacheMgr using reflection
-        Field redisCacheMgrField = CourseAccessServiceImpl.class.getDeclaredField("redisCacheMgr");
-        redisCacheMgrField.setAccessible(true);
-        redisCacheMgrField.set(courseAccessService, redisCacheMgr);
-        
+
         // Inject contentReadFields using reflection
         Field contentReadFieldsField = CourseAccessServiceImpl.class.getDeclaredField("contentReadFields");
         contentReadFieldsField.setAccessible(true);

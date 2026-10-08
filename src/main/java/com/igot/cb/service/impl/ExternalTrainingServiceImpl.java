@@ -285,7 +285,7 @@ public class ExternalTrainingServiceImpl implements ExternalTrainingService {
     }
 
     @Override
-    public ResponseEntity<?> downloadFile(String fileName, String authToken) {
+    public ResponseEntity<Object> downloadFile(String fileName, String authToken) {
         try {
             ApiResponse response = ProjectUtil.createDefaultResponse(Constants.API_EXTERNAL_TRAINING_USER_BULK_UPLOAD_STATUS);
             String userId = accessTokenValidator.fetchUserIdFromAccessToken(authToken, response);

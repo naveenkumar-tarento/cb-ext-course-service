@@ -44,7 +44,7 @@ class AccessSettingsServiceImplTest {
 
   @Test
   void testUpsert_NullUserGroupDetails() {
-    ApiResponse response = service.upsert(null, "token");
+    ApiResponse response = service.upsert(null);
     assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
     assertEquals(Constants.FAILED, response.getParams().getStatus());
     assertTrue(response.getParams().getErrMsg().contains("cannot be null or empty"));
@@ -52,7 +52,7 @@ class AccessSettingsServiceImplTest {
 
   @Test
   void testUpsert_EmptyUserGroupDetails() {
-    ApiResponse response = service.upsert(new HashMap<>(), "token");
+    ApiResponse response = service.upsert(new HashMap<>());
     assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
     assertEquals(Constants.FAILED, response.getParams().getStatus());
     assertTrue(response.getParams().getErrMsg().contains("cannot be null or empty"));
@@ -64,7 +64,7 @@ class AccessSettingsServiceImplTest {
     Map<String, Object> details = new HashMap<>();
     details.put(Constants.CONTENT_ID, "cid"); // or any dummy key
     when(payloadValidation.validateAccessControlPayload(details)).thenReturn("validation error");
-    ApiResponse response = service.upsert(details, "token");
+    ApiResponse response = service.upsert(details);
     assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
     assertEquals(Constants.FAILED, response.getParams().getStatus());
     assertTrue(response.getParams().getErrMsg().contains("validation error"));
@@ -128,7 +128,7 @@ class AccessSettingsServiceImplTest {
     when(cassandraOperation.insertRecord(anyString(), anyString(), anyMap())).thenReturn(null);
     when(accessSettingMigrationService.processAccessSettingRule(anyMap())).thenReturn(true);
 
-    ApiResponse response = service.upsert(details, "token");
+    ApiResponse response = service.upsert(details);
     assertEquals(HttpStatus.OK, response.getResponseCode());
     assertEquals(Constants.CREATED_RULES, response.getResult().get(Constants.MSG));
     // assertEquals(doId, response.getResult().get("contentId")); // contentId is not present in response
@@ -144,7 +144,7 @@ class AccessSettingsServiceImplTest {
     doReturn(true).when(accessSettingMigrationService).processAccessSettingRule(anyMap());
     doThrow(new RuntimeException("db error")).when(cassandraOperation).insertRecord(anyString(), anyString(), anyMap());
 
-    ApiResponse response = service.upsert(details, "token");
+    ApiResponse response = service.upsert(details);
     assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
     assertEquals(Constants.FAILED, response.getParams().getStatus());
     assertTrue(response.getParams().getErrMsg().contains("Failed to create access settings"));

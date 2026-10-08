@@ -39,7 +39,7 @@ public class AccessSettingsServiceImpl {
     this.accessSettingMigrationService = accessSettingMigrationService;
   }
 
-  public ApiResponse upsert(Map<String, Object> userGroupDetails, String authToken) {
+  public ApiResponse upsert(Map<String, Object> userGroupDetails) {
     log.info("AccessSettingsService::create:inside");
     ApiResponse response = ApiResponse.createDefaultResponse(Constants.ACCESS_SETTINGS_CREATE_API);
     if (userGroupDetails == null || userGroupDetails.isEmpty()) {
@@ -198,7 +198,7 @@ public class AccessSettingsServiceImpl {
   }
 
   // Admin upsert: merges userGroups with identical criteria before assigning UUIDs
-  public ApiResponse adminUpsert(Map<String, Object> userGroupDetails, String authToken) {
+  public ApiResponse adminUpsert(Map<String, Object> userGroupDetails) {
     log.info("AccessSettingsService::upsertAdmin:inside");
     ApiResponse response = ApiResponse.createDefaultResponse(Constants.ACCESS_SETTINGS_CREATE_API);
     if (userGroupDetails == null || userGroupDetails.isEmpty()) {

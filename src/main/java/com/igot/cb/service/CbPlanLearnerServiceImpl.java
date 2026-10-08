@@ -19,7 +19,6 @@ import org.apache.commons.collections.MapUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -45,18 +44,13 @@ public class CbPlanLearnerServiceImpl {
     @Value("${cbplan.allowed.fields.update}")
     private String allowedFieldsConfig;
 
-    @Autowired
-    CbExtServerProperties serverProperties;
+    private final CbExtServerProperties serverProperties;
 
+    private final UserUtilityService userUtilityService;
 
-    @Autowired
-    UserUtilityService userUtilityService;
+    private final ContentInfoServiceImpl contentService;
 
-    @Autowired
-    ContentInfoServiceImpl contentService;
-
-    @Autowired
-    private EsUtilService esUtilService;
+    private final EsUtilService esUtilService;
 
     private final CbPlanCacheMgr cbPlanCacheMgr;
 
@@ -66,13 +60,19 @@ public class CbPlanLearnerServiceImpl {
     @Value("${elastic.required.field.cb.plan.json.path}")
     private String elasticCbPlanJsonPath;
 
-    @Autowired
-    private RedisCacheMgr redisCacheMgr;
+    private final RedisCacheMgr redisCacheMgr;
 
-    public CbPlanLearnerServiceImpl(AccessTokenValidator accessTokenValidator, CassandraOperation cassandraOperation, CbPlanCacheMgr cbPlanCacheMgr) {
+    public CbPlanLearnerServiceImpl(AccessTokenValidator accessTokenValidator, CassandraOperation cassandraOperation, CbPlanCacheMgr cbPlanCacheMgr,
+            CbExtServerProperties serverProperties, UserUtilityService userUtilityService, ContentInfoServiceImpl contentService,
+            EsUtilService esUtilService, RedisCacheMgr redisCacheMgr) {
         this.accessTokenValidator = accessTokenValidator;
         this.cassandraOperation = cassandraOperation;
         this.cbPlanCacheMgr = cbPlanCacheMgr;
+        this.serverProperties = serverProperties;
+        this.userUtilityService = userUtilityService;
+        this.contentService = contentService;
+        this.esUtilService = esUtilService;
+        this.redisCacheMgr = redisCacheMgr;
     }
 
     public ApiResponse getCBPlanListForUser(String userOrgId, String authTokenOrUserId, boolean isPrivate) {

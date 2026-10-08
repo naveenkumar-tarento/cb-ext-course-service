@@ -10,7 +10,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 
-import java.lang.reflect.Field;
 import java.time.LocalDate;
 import java.util.*;
 
@@ -114,38 +113,13 @@ class NotificationServiceImplTest {
     private final String authToken = "validToken";
 
     @BeforeEach
-    void setUp() throws Exception {
-        notificationService = new NotificationServiceImpl();
-
+    void setUp() {
         // Create mocks manually to avoid @Mock annotation
         cassandraOperation = mock(CassandraOperation.class);
         userUtilityService = mock(UserUtilityService.class);
 
-        // Inject test AccessTokenValidator using reflection
-        Field accessTokenValidatorField = NotificationServiceImpl.class.getDeclaredField("accessTokenValidator");
-        accessTokenValidatorField.setAccessible(true);
-        accessTokenValidatorField.set(notificationService, testAccessTokenValidator);
-
-        Field cassandraOperationField = NotificationServiceImpl.class.getDeclaredField("cassandraOperation");
-        cassandraOperationField.setAccessible(true);
-        cassandraOperationField.set(notificationService, cassandraOperation);
-
-        Field userUtilityServiceField = NotificationServiceImpl.class.getDeclaredField("userUtilityService");
-        userUtilityServiceField.setAccessible(true);
-        userUtilityServiceField.set(notificationService, userUtilityService);
-
-        Field outboundRequestHandlerField = NotificationServiceImpl.class.getDeclaredField("outboundRequestHandlerService");
-        outboundRequestHandlerField.setAccessible(true);
-        outboundRequestHandlerField.set(notificationService, testOutboundRequestHandler);
-
-        Field propsField = NotificationServiceImpl.class.getDeclaredField("props");
-        propsField.setAccessible(true);
-        propsField.set(notificationService, testProps);
-
-        // Inject ObjectMapper to avoid NullPointerException
-        Field objectMapperField = NotificationServiceImpl.class.getDeclaredField("objectMapper");
-        objectMapperField.setAccessible(true);
-        objectMapperField.set(notificationService, new com.fasterxml.jackson.databind.ObjectMapper());
+        notificationService = new NotificationServiceImpl(testAccessTokenValidator, cassandraOperation,
+                userUtilityService, testOutboundRequestHandler, testProps, new com.fasterxml.jackson.databind.ObjectMapper());
     }
 
     private Map<String, Object> buildUserSearchResponse(String email, String firstName) {

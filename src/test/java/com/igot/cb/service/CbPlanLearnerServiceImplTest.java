@@ -48,9 +48,8 @@ class CbPlanLearnerServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new CbPlanLearnerServiceImpl(accessTokenValidator, cassandraOperation, cbPlanCacheMgr);
-        ReflectionTestUtils.setField(service, "contentService", contentService);
-        ReflectionTestUtils.setField(service, "redisCacheMgr", redisCacheMgr);
+        service = new CbPlanLearnerServiceImpl(accessTokenValidator, cassandraOperation, cbPlanCacheMgr,
+                null, null, contentService, null, redisCacheMgr);
     }
 
 

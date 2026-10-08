@@ -31,7 +31,7 @@ public class ExternalTrainingController {
     }
 
     @GetMapping("/bulkupload/download/{fileName}")
-    public ResponseEntity<?> downloadFile(@PathVariable("fileName") String fileName, @RequestHeader(Constants.X_AUTH_TOKEN) String authToken) {
+    public ResponseEntity<Object> downloadFile(@PathVariable("fileName") String fileName, @RequestHeader(Constants.X_AUTH_TOKEN) String authToken) {
         return externalTrainingService.downloadFile(fileName, authToken);
     }
 

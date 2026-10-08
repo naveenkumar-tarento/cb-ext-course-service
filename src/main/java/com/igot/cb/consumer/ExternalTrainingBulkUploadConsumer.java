@@ -48,32 +48,35 @@ public class ExternalTrainingBulkUploadConsumer {
 
     ObjectMapper objectMapper = new ObjectMapper();
 
-    @Autowired
-    CbExtServerProperties serverProperties;
+    private final CbExtServerProperties serverProperties;
 
-    @Autowired
-    CassandraOperation cassandraOperation;
+    private final CassandraOperation cassandraOperation;
 
-    @Autowired
-    StorageService storageService;
+    private final StorageService storageService;
 
-    @Autowired
-    OutboundRequestHandlerServiceImpl outboundRequestHandlerService;
+    private final OutboundRequestHandlerServiceImpl outboundRequestHandlerService;
 
-    @Autowired
-    private KafkaTemplate<String, String> kafkaTemplate;
+    private final KafkaTemplate<String, String> kafkaTemplate;
 
-    @Autowired
-    private ExternalTrainingCertificateServiceImpl externalTrainingCertificateService;
+    private final ExternalTrainingCertificateServiceImpl externalTrainingCertificateService;
 
-    @Autowired
-    private ContentInfoServiceImpl contentInfoService;
+    private final ContentInfoServiceImpl contentInfoService;
 
     private final NotificationService notificationService;
 
     @Autowired
-    public ExternalTrainingBulkUploadConsumer(NotificationService notificationService) {
+    public ExternalTrainingBulkUploadConsumer(NotificationService notificationService, CbExtServerProperties serverProperties,
+            CassandraOperation cassandraOperation, StorageService storageService, OutboundRequestHandlerServiceImpl outboundRequestHandlerService,
+            KafkaTemplate<String, String> kafkaTemplate, ExternalTrainingCertificateServiceImpl externalTrainingCertificateService,
+            ContentInfoServiceImpl contentInfoService) {
         this.notificationService = notificationService;
+        this.serverProperties = serverProperties;
+        this.cassandraOperation = cassandraOperation;
+        this.storageService = storageService;
+        this.outboundRequestHandlerService = outboundRequestHandlerService;
+        this.kafkaTemplate = kafkaTemplate;
+        this.externalTrainingCertificateService = externalTrainingCertificateService;
+        this.contentInfoService = contentInfoService;
     }
 
     @KafkaListener(topics = "${external.training.user.bulk.upload.topic}", groupId = "${external.training.user.bulk.upload.topic.group}")
@@ -336,7 +339,7 @@ public class ExternalTrainingBulkUploadConsumer {
     /**
      * Finalizes the status based on the record processing result.
      */
-    private String finalizeStatus(int totalRecordsCount, int processedCount, int failedCount, File file) throws IOException {
+    private String finalizeStatus(int totalRecordsCount, int processedCount, int failedCount, File file) {
         String status = uploadTheUpdatedCSVFile(file);
         if (Constants.SUCCESS.equalsIgnoreCase(status) && failedCount == 0 && totalRecordsCount == processedCount && totalRecordsCount >= 1) {
             return Constants.SUCCESS;

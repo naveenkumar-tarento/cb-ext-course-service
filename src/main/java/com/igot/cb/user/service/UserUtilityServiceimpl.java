@@ -7,7 +7,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
@@ -25,11 +24,11 @@ public class UserUtilityServiceimpl implements UserUtilityService {
 
     private final CassandraOperation cassandraOperation;
 
-    @Autowired
-    DecryptServiceImpl decryptService;
+    private final DecryptServiceImpl decryptService;
 
-    public UserUtilityServiceimpl(CassandraOperation cassandraOperation) {
+    public UserUtilityServiceimpl(CassandraOperation cassandraOperation, DecryptServiceImpl decryptService) {
         this.cassandraOperation = cassandraOperation;
+        this.decryptService = decryptService;
     }
 
 

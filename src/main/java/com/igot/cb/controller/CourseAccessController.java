@@ -54,7 +54,7 @@ public class CourseAccessController {
     @PostMapping("/admin/user/v2/assignedcourses/{userId}")
     public ResponseEntity<ApiResponse> getAssignedCoursesForUserByAdmin(@PathVariable("userId") String userId,
             @RequestBody Map<String, Object> requestBody, @RequestHeader(Constants.X_AUTH_TOKEN) String authToken) {
-        ApiResponse response = courseAccessService.getAssignedCoursesForUserByAdmin(userId, requestBody, authToken);
+        ApiResponse response = courseAccessService.getAssignedCoursesForUserByAdmin(userId, requestBody);
         return new ResponseEntity<>(response, response.getResponseCode());
     }
 

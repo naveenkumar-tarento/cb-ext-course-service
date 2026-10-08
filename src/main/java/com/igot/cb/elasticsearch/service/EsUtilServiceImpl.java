@@ -13,7 +13,6 @@ import co.elastic.clients.json.JsonData;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.igot.cb.cassandra.exceptions.CustomException;
-import com.igot.cb.elasticsearch.config.EsConfig;
 import com.igot.cb.elasticsearch.dto.FacetDTO;
 import com.igot.cb.elasticsearch.dto.SearchCriteria;
 import com.igot.cb.elasticsearch.dto.SearchResult;
@@ -24,7 +23,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.MapUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -40,16 +38,16 @@ public class EsUtilServiceImpl implements EsUtilService{
     private final ElasticsearchClient elasticsearchClient;
     private final CbExtServerProperties cbExtServerProperties;
     private final Logger logger = LogManager.getLogger(getClass());
+    private final ObjectMapper objectMapper;
 
     private static final Map<String, Map<String, Object>> schemaCache = new ConcurrentHashMap<>();
 
-    public EsUtilServiceImpl(EsConfig esConfig, ElasticsearchClient elasticsearchClient, CbExtServerProperties cbExtServerProperties) {
+    public EsUtilServiceImpl(ElasticsearchClient elasticsearchClient, CbExtServerProperties cbExtServerProperties,
+            ObjectMapper objectMapper) {
         this.cbExtServerProperties = cbExtServerProperties;
         this.elasticsearchClient = elasticsearchClient;
+        this.objectMapper = objectMapper;
     }
-
-    @Autowired
-    private ObjectMapper objectMapper;
 
     @Override
     public String addDocument(

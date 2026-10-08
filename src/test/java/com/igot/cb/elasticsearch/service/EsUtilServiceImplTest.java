@@ -13,7 +13,6 @@ import co.elastic.clients.elasticsearch.core.search.TotalHits;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.igot.cb.cassandra.exceptions.CustomException;
-import com.igot.cb.elasticsearch.config.EsConfig;
 import com.igot.cb.elasticsearch.dto.FacetDTO;
 import com.igot.cb.elasticsearch.dto.SearchCriteria;
 import com.igot.cb.elasticsearch.dto.SearchResult;
@@ -28,7 +27,6 @@ import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -43,9 +41,6 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class EsUtilServiceImplTest {
-
-    @Mock
-    private EsConfig esConfig;
 
     @Mock
     private ElasticsearchClient elasticsearchClient;
@@ -63,8 +58,7 @@ class EsUtilServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        esUtilService = new EsUtilServiceImpl(esConfig, elasticsearchClient, cbExtServerProperties);
-        ReflectionTestUtils.setField(esUtilService, "objectMapper", objectMapper);
+        esUtilService = new EsUtilServiceImpl(elasticsearchClient, cbExtServerProperties, objectMapper);
     }
 
     @Test

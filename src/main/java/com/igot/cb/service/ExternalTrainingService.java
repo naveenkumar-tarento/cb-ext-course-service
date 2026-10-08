@@ -11,7 +11,7 @@ public interface ExternalTrainingService {
 
     public ApiResponse externalTrainingUserBulkUploadStatus(String eventId, String batchId, String authToken);
 
-    public ResponseEntity<?> downloadFile(String fileName, String authToken);
+    public ResponseEntity<Object> downloadFile(String fileName, String authToken);
 
     public ResponseEntity<Resource> downloadBulkUploadSampleFile();
 }
