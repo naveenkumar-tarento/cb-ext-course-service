@@ -1,6 +1,5 @@
 package com.igot.cb.config;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -13,6 +12,8 @@ import lombok.extern.slf4j.Slf4j;
 import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.JedisPoolConfig;
 
+import java.time.Duration;
+
 /**
  * Configuration class for Redis connection pool.
  * It sets up the JedisPool with specified configurations and properties.
@@ -23,9 +24,6 @@ import redis.clients.jedis.JedisPoolConfig;
 public class RedisConfig {
 
     private final PropertiesCache propertiesCache;
-    
-    @Autowired
-    private ServerProperties serverProperties;
 
     /**
      * Constructor for RedisConfig.
@@ -57,7 +55,7 @@ public class RedisConfig {
      * @return JedisPool instance configured with Redis data settings.
      */
     @Bean(name = "jedisDataPool")
-    public JedisPool jedisDataPool() {
+    public JedisPool jedisDataPool(ServerProperties serverProperties) {
         System.setProperty("org.apache.commons.pool2.registerMbeans", "false");
 
         JedisPoolConfig poolConfig = buildPoolConfig();
@@ -73,8 +71,8 @@ public class RedisConfig {
         poolConfig.setTestOnBorrow(true);
         poolConfig.setTestOnReturn(true);
         poolConfig.setTestWhileIdle(true);
-        poolConfig.setMinEvictableIdleTimeMillis(120000);
-        poolConfig.setTimeBetweenEvictionRunsMillis(30000);
+        poolConfig.setMinEvictableIdleDuration(Duration.ofMillis(120000));
+        poolConfig.setTimeBetweenEvictionRuns(Duration.ofMillis(30000));
         poolConfig.setNumTestsPerEvictionRun(3);
         poolConfig.setBlockWhenExhausted(true);
         return poolConfig;

@@ -29,7 +29,6 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 @Service
 @Slf4j
@@ -170,41 +169,17 @@ public class CbPlanLearnerServiceImpl {
         Map<String, Object> courseDetailsMap = new HashMap<>();
         List<String> plansToCache = new ArrayList<>();
         Map<String, String> coursePlanMappings = new HashMap<>();
-        List<String> aparCourseIds = activeCbPlans.stream()
-                .filter(Objects::nonNull)
-                .filter(plan -> Boolean.parseBoolean(String.valueOf(plan.get(Constants.IS_APAR))))
-                .map(plan -> plan.get(Constants.CONTENT_LIST))
-                .flatMap(val -> {
-                    if (val instanceof List<?> list) {
-                        return list.stream().map(String::valueOf);
-                    }
-                    if (val != null) {
-                        return Stream.of(String.valueOf(val));
-                    }
-                    return Stream.empty();
-                })
-                .filter(StringUtils::isNotBlank)
-                .distinct()
-                .toList();
         for (Map<String, Object> cbPlan : activeCbPlans) {
-            Object contextDataObj = cbPlan.get(Constants.CONTEXT_DATA_REQUEST);
-            try {
-                if (contextDataObj != null) {
-                    Map<String, Object> contextDataMap = parseContextData(contextDataObj);
-                    if (MapUtils.isNotEmpty(contextDataMap)
-                            && !evaluateContextAccessRule(contextDataMap, userProfile)) {
-                        log.info("User does not have access to cbPlan: {}", cbPlan.get(Constants.PLAN_ID));
-                        continue;
-                    }
-                }
-            } catch (Exception e) {
-                log.error("Exception in parsing context data for cb plan id : {}", cbPlan.get(Constants.PLAN_ID), e);
+            if (!hasAccessToCbPlan(cbPlan, userProfile)) {
                 continue;
             }
             Object planEndDateObj = cbPlan.get(Constants.END_DATE_REQUEST);
-            String planEndDateStr = (planEndDateObj instanceof Instant)
-                    ? ((Instant) planEndDateObj).toString()
-                    : planEndDateObj != null ? planEndDateObj.toString() : null;
+            String planEndDateStr;
+            if (planEndDateObj instanceof Instant instant) {
+                planEndDateStr = instant.toString();
+            } else {
+                planEndDateStr = planEndDateObj != null ? planEndDateObj.toString() : null;
+            }
 
             plansToCache.add((String) cbPlan.get(Constants.PLAN_ID));
 
@@ -220,42 +195,69 @@ public class CbPlanLearnerServiceImpl {
             List<String> courses = (List<String>) cbPlan.get(Constants.CONTENT_LIST);
             List<Map<String, Object>> courseList = processCoursesForCbPlan(
                     courses, userOrgId, userProfile, courseDetailsMap, planEndDateStr, coursePlanMappings);
-            boolean isApar = Boolean.TRUE.equals(cbPlanDetails.get(Constants.IS_APAR));
-            List<Map<String, Object>> filteredList = new ArrayList<>();
-            for (Map<String, Object> c : courseList) {
-                String id = (String) c.get(Constants.IDENTIFIER);
-                if (StringUtils.isBlank(id)) {
-                    log.warn("Skipping course with invalid or blank identifier in plan {}", cbPlan.get(Constants.PLAN_ID));
-                    continue;
-                }
-                filteredList.add(c);
-            }
+            List<Map<String, Object>> filteredList = filterValidCourses(courseList, cbPlan);
             cbPlanDetails.put(Constants.CONTENT_LIST, filteredList);
             resultMap.add(cbPlanDetails);
         }
 
         //Cache if enabled
         if (isCacheEnabled.get()) {
-            // Cache coursePlanMappings and plan IDs
-            String coursePlanMappingsJson = "";
-            String plansToCacheJson = "";
-            if (MapUtils.isNotEmpty(coursePlanMappings)) {
-                coursePlanMappingsJson = mapper.writeValueAsString(coursePlanMappings);
-            }
-            if (CollectionUtils.isNotEmpty(plansToCache)) {
-                plansToCacheJson = mapper.writeValueAsString(plansToCache);
-            }
-            redisCacheMgr.putInCache(
-                    Constants.CB_PLAN_REDIS_KEY_PREFIX + userId + Constants.BY_COURSE_SUFFIX,
-                    coursePlanMappingsJson
-            );
-            redisCacheMgr.putInCache(
-                    Constants.CB_PLAN_REDIS_KEY_PREFIX + userId + Constants.BY_PLANS_SUFFIX,
-                    plansToCacheJson
-            );
-            log.info("Cached CB Plan details for userId: {}, courses: {}, plans: {}",
-                    userId, coursePlanMappings.size(), plansToCache.size());
+            cacheProcessedPlans(userId, coursePlanMappings, plansToCache);
         }
+    }
+
+    private boolean hasAccessToCbPlan(Map<String, Object> cbPlan, Map<String, String> userProfile) {
+        Object contextDataObj = cbPlan.get(Constants.CONTEXT_DATA_REQUEST);
+        if (contextDataObj == null) {
+            return true;
+        }
+        try {
+            Map<String, Object> contextDataMap = parseContextData(contextDataObj);
+            if (MapUtils.isNotEmpty(contextDataMap)
+                    && !evaluateContextAccessRule(contextDataMap, userProfile)) {
+                log.info("User does not have access to cbPlan: {}", cbPlan.get(Constants.PLAN_ID));
+                return false;
+            }
+            return true;
+        } catch (Exception e) {
+            log.error("Exception in parsing context data for cb plan id : {}", cbPlan.get(Constants.PLAN_ID), e);
+            return false;
+        }
+    }
+
+    private List<Map<String, Object>> filterValidCourses(List<Map<String, Object>> courseList, Map<String, Object> cbPlan) {
+        List<Map<String, Object>> filteredList = new ArrayList<>();
+        for (Map<String, Object> c : courseList) {
+            String id = (String) c.get(Constants.IDENTIFIER);
+            if (StringUtils.isBlank(id)) {
+                log.warn("Skipping course with invalid or blank identifier in plan {}", cbPlan.get(Constants.PLAN_ID));
+                continue;
+            }
+            filteredList.add(c);
+        }
+        return filteredList;
+    }
+
+    private void cacheProcessedPlans(String userId, Map<String, String> coursePlanMappings, List<String> plansToCache) throws JsonProcessingException {
+        // Cache coursePlanMappings and plan IDs
+        String coursePlanMappingsJson = "";
+        String plansToCacheJson = "";
+        if (MapUtils.isNotEmpty(coursePlanMappings)) {
+            coursePlanMappingsJson = mapper.writeValueAsString(coursePlanMappings);
+        }
+        if (CollectionUtils.isNotEmpty(plansToCache)) {
+            plansToCacheJson = mapper.writeValueAsString(plansToCache);
+        }
+        redisCacheMgr.putInCache(
+                Constants.CB_PLAN_REDIS_KEY_PREFIX + userId + Constants.BY_COURSE_SUFFIX,
+                coursePlanMappingsJson
+        );
+        redisCacheMgr.putInCache(
+                Constants.CB_PLAN_REDIS_KEY_PREFIX + userId + Constants.BY_PLANS_SUFFIX,
+                plansToCacheJson
+        );
+        log.info("Cached CB Plan details for userId: {}, courses: {}, plans: {}",
+                userId, coursePlanMappings.size(), plansToCache.size());
     }
 
 
@@ -270,33 +272,11 @@ public class CbPlanLearnerServiceImpl {
         List<Map<String, Object>> courseList = new ArrayList<>();
 
         for (String courseId : courses) {
-            Map<String, Object> contentDetails = null;
-
-
-            contentDetails = contentService.readContent(courseId, null);
+            Map<String, Object> contentDetails = contentService.readContent(courseId, null);
 
             if (MapUtils.isNotEmpty(contentDetails)) {
                 if (courseId.contains("_rc")) {
-                    if (Constants.VERIFIED.equalsIgnoreCase(userProfile.get(Constants.PROFILE_STATUS_LOWER_KEY))) {
-                        Object secureSettingsObj = contentDetails.get(Constants.SECURE_SETTINGS);
-                        if (secureSettingsObj instanceof Map<?, ?> secureSettings && !secureSettings.isEmpty()) {
-                            Object orgListObj = secureSettings.get(Constants.ORGANISATION);
-                            if (orgListObj instanceof List<?> orgList && !orgList.isEmpty()) {
-                                List<String> secureOrgList = orgList.stream()
-                                        .filter(String.class::isInstance)
-                                        .map(String.class::cast)
-                                        .toList();
-
-                                if (secureOrgList.contains(userOrgId)) {
-                                    courseDetailsMap.put(courseId, contentDetails);
-                                }
-                            }
-                        }
-                    }
-
-                    if (!courseDetailsMap.containsKey(courseId)) {
-                        contentDetails.clear();
-                    }
+                    handleRestrictedCourse(courseId, contentDetails, userOrgId, userProfile, courseDetailsMap);
                 } else {
                     courseDetailsMap.put(courseId, contentDetails);
                 }
@@ -310,6 +290,30 @@ public class CbPlanLearnerServiceImpl {
             }
         }
         return courseList;
+    }
+
+    private void handleRestrictedCourse(String courseId, Map<String, Object> contentDetails, String userOrgId,
+                                         Map<String, String> userProfile, Map<String, Object> courseDetailsMap) {
+        if (Constants.VERIFIED.equalsIgnoreCase(userProfile.get(Constants.PROFILE_STATUS_LOWER_KEY))) {
+            Object secureSettingsObj = contentDetails.get(Constants.SECURE_SETTINGS);
+            if (secureSettingsObj instanceof Map<?, ?> secureSettings && !secureSettings.isEmpty()) {
+                Object orgListObj = secureSettings.get(Constants.ORGANISATION);
+                if (orgListObj instanceof List<?> orgList && !orgList.isEmpty()) {
+                    List<String> secureOrgList = orgList.stream()
+                            .filter(String.class::isInstance)
+                            .map(String.class::cast)
+                            .toList();
+
+                    if (secureOrgList.contains(userOrgId)) {
+                        courseDetailsMap.put(courseId, contentDetails);
+                    }
+                }
+            }
+        }
+
+        if (!courseDetailsMap.containsKey(courseId)) {
+            contentDetails.clear();
+        }
     }
 
 
@@ -369,15 +373,31 @@ public class CbPlanLearnerServiceImpl {
         }
         userProfile.put(Constants.USER, (String) userBasicProfile.get(Constants.ID));
         userProfile.put(Constants.USER_ROOT_ORG_ID, (String) userBasicProfile.get(Constants.ROOT_ORG_ID));
+
+        Optional<Map<String, Object>> profileDetailsOpt = resolveProfileDetails(userBasicProfile);
+        if (profileDetailsOpt.isEmpty()) {
+            return;
+        }
+        Map<String, Object> profileDetails = profileDetailsOpt.get();
+
+        if (!org.apache.commons.collections4.MapUtils.isEmpty(profileDetails)) {
+            applyProfileDetails(userProfile, profileDetails);
+        }
+        getExistingContextData((String) userBasicProfile.get(Constants.ID),
+                (String) userBasicProfile.get(Constants.ROOT_ORG_ID),
+                userProfile);
+    }
+
+    private Optional<Map<String, Object>> resolveProfileDetails(Map<String, Object> userBasicProfile) throws JsonProcessingException {
         Object rawValue = userBasicProfile.get(Constants.PROFILE_DETAILS.toLowerCase());
         Map<String, Object> profileDetails = new HashMap<>();
 
         if (rawValue == null) {
             log.warn("profileDetails is null for userId: {}", userBasicProfile.get(Constants.ID));
-            return;
-        } else if (rawValue instanceof String) {
-            if (StringUtils.isNotBlank((String) rawValue)) {
-                profileDetails = mapper.readValue((String) rawValue, new TypeReference<Map<String, Object>>() {
+            return Optional.empty();
+        } else if (rawValue instanceof String strValue) {
+            if (StringUtils.isNotBlank(strValue)) {
+                profileDetails = mapper.readValue(strValue, new TypeReference<Map<String, Object>>() {
                 });
             }
         } else if (rawValue instanceof Map) {
@@ -388,38 +408,35 @@ public class CbPlanLearnerServiceImpl {
                 });
             } catch (Exception e) {
                 log.error("Failed to convert profileDetails for userId: {}", userBasicProfile.get(Constants.ID), e);
-                return;
+                return Optional.empty();
             }
         }
+        return Optional.of(profileDetails);
+    }
 
-
-        if (!org.apache.commons.collections4.MapUtils.isEmpty(profileDetails)) {
-            List<Map<String, Object>> professionalDetailList = (List<Map<String, Object>>) profileDetails
-                    .get(Constants.PROFESSIONAL_DETAILS);
-            if (CollectionUtils.isNotEmpty(professionalDetailList)) {
-                Map<String, Object> professionalDetails = professionalDetailList.get(0);
-                userProfile.put(Constants.DESIGNATION, (String) professionalDetails.get(Constants.DESIGNATION));
-                userProfile.put(Constants.GROUP, (String) professionalDetails.get(Constants.GROUP));
-            }
-            userProfile.put(Constants.PROFILE_STATUS_LOWER_KEY,
-                    (String) profileDetails.get(Constants.PROFILE_STATUS_KEY));
-            Map<String, Object> cadreDetails = (Map<String, Object>) profileDetails.get(Constants.CADRE_DETAILS);
-            boolean centralDeputation = false;
-            if (org.apache.commons.collections4.MapUtils.isNotEmpty(cadreDetails)) {
-                userProfile.put(Constants.CADRE, (String) cadreDetails.get(Constants.CADRE_NAME));
-                userProfile.put(Constants.SERVICE, (String) cadreDetails.get(Constants.CIVIL_SERVICE_NAME));
-                if (cadreDetails.containsKey(Constants.CADRE_BATCH)) {  
-                    userProfile.put(Constants.BATCH, String.valueOf(cadreDetails.get(Constants.CADRE_BATCH)));
-                }
-                if (cadreDetails.containsKey(Constants.CENTRAL_DEPUTATION)) {
-                    centralDeputation = (Boolean) cadreDetails.get(Constants.CENTRAL_DEPUTATION);
-                }
-            }
-            userProfile.put(Constants.CENTRAL_DEPUTATION_LOWER_KEY, String.valueOf(centralDeputation));
+    private void applyProfileDetails(Map<String, String> userProfile, Map<String, Object> profileDetails) {
+        List<Map<String, Object>> professionalDetailList = (List<Map<String, Object>>) profileDetails
+                .get(Constants.PROFESSIONAL_DETAILS);
+        if (CollectionUtils.isNotEmpty(professionalDetailList)) {
+            Map<String, Object> professionalDetails = professionalDetailList.get(0);
+            userProfile.put(Constants.DESIGNATION, (String) professionalDetails.get(Constants.DESIGNATION));
+            userProfile.put(Constants.GROUP, (String) professionalDetails.get(Constants.GROUP));
         }
-        getExistingContextData((String) userBasicProfile.get(Constants.ID),
-                (String) userBasicProfile.get(Constants.ROOT_ORG_ID),
-                userProfile);
+        userProfile.put(Constants.PROFILE_STATUS_LOWER_KEY,
+                (String) profileDetails.get(Constants.PROFILE_STATUS_KEY));
+        Map<String, Object> cadreDetails = (Map<String, Object>) profileDetails.get(Constants.CADRE_DETAILS);
+        boolean centralDeputation = false;
+        if (org.apache.commons.collections4.MapUtils.isNotEmpty(cadreDetails)) {
+            userProfile.put(Constants.CADRE, (String) cadreDetails.get(Constants.CADRE_NAME));
+            userProfile.put(Constants.SERVICE, (String) cadreDetails.get(Constants.CIVIL_SERVICE_NAME));
+            if (cadreDetails.containsKey(Constants.CADRE_BATCH)) {
+                userProfile.put(Constants.BATCH, String.valueOf(cadreDetails.get(Constants.CADRE_BATCH)));
+            }
+            if (cadreDetails.containsKey(Constants.CENTRAL_DEPUTATION)) {
+                centralDeputation = (Boolean) cadreDetails.get(Constants.CENTRAL_DEPUTATION);
+            }
+        }
+        userProfile.put(Constants.CENTRAL_DEPUTATION_LOWER_KEY, String.valueOf(centralDeputation));
     }
 
     private boolean evaluateContextAccessRule(Map<String, Object> accessSettingIdMap,
@@ -445,7 +462,6 @@ public class CbPlanLearnerServiceImpl {
         // Iterate through all groups: user must match at least one fully
         for (Map<String, Object> userGroup : userGroups) {
             String userGroupName = (String) userGroup.get(Constants.USER_GROUP_NAME); // adjust constant if you have
-            boolean isUserHasAccess = true;
 
             List<Map<String, Object>> criteriaList =
                     (List<Map<String, Object>>) userGroup.get(Constants.USER_GROUP_CRITERIA_LIST);
@@ -453,41 +469,8 @@ public class CbPlanLearnerServiceImpl {
             if (CollectionUtils.isEmpty(criteriaList)) {
                 continue; // no criteria = skip group
             }
-            for (Map<String, Object> criteria : criteriaList) {
-                String criteriaKey = (String) criteria.get(Constants.CRITERIA_KEY);
-                criteriaKey = criteriaKey.toLowerCase().trim(); // normalize key to lower case
-                Object rawCriteriaValue = criteria.get(Constants.CRITERIA_VALUE);
 
-                if (Constants.CENTRAL_DEPUTATION.equals(criteriaKey)) {
-                    boolean expectedValue = Boolean.parseBoolean(String.valueOf(rawCriteriaValue));
-                    boolean actualValue = Boolean.parseBoolean(
-                            String.valueOf(userProfile.getOrDefault(criteriaKey, "false"))
-                    );
-
-                    if (expectedValue != actualValue) {
-                        log.debug("User does not match boolean criteria key: {} in group: {}", criteriaKey, userGroupName);
-                        isUserHasAccess = false;
-                        break;
-                    }
-                } else {
-                    List<String> criteriaValues = (rawCriteriaValue instanceof List<?>)
-                            ? ((List<?>) rawCriteriaValue).stream()
-                                    .map(value -> String.valueOf(value).toLowerCase().trim()).toList()
-                            : Collections.singletonList(String.valueOf(rawCriteriaValue).toLowerCase().trim());
-                    
-                    String userCriteriaValue = String.valueOf(userProfile.get(criteriaKey)).toLowerCase().trim();
-
-                    if (StringUtils.isEmpty(userCriteriaValue) || !criteriaValues.contains(userCriteriaValue)) {
-                        log.debug("User does not match criteria key: {} in group: {}", criteriaKey, userGroupName);
-                        isUserHasAccess = false;
-                        break;
-                    }
-                }
-
-            }
-
-
-            if (isUserHasAccess) {
+            if (matchesAllCriteria(userGroupName, criteriaList, userProfile)) {
                 log.info("User matches all criteria in userGroup: {}", userGroupName);
                 return true;
             }
@@ -496,45 +479,99 @@ public class CbPlanLearnerServiceImpl {
         return false;
     }
 
+    private boolean matchesAllCriteria(String userGroupName, List<Map<String, Object>> criteriaList,
+                                        Map<String, String> userProfile) {
+        for (Map<String, Object> criteria : criteriaList) {
+            if (!matchesSingleCriteria(criteria, userProfile, userGroupName)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean matchesSingleCriteria(Map<String, Object> criteria, Map<String, String> userProfile,
+                                           String userGroupName) {
+        String criteriaKey = (String) criteria.get(Constants.CRITERIA_KEY);
+        criteriaKey = criteriaKey.toLowerCase().trim(); // normalize key to lower case
+        Object rawCriteriaValue = criteria.get(Constants.CRITERIA_VALUE);
+
+        if (Constants.CENTRAL_DEPUTATION.equals(criteriaKey)) {
+            boolean expectedValue = Boolean.parseBoolean(String.valueOf(rawCriteriaValue));
+            boolean actualValue = Boolean.parseBoolean(
+                    String.valueOf(userProfile.getOrDefault(criteriaKey, "false"))
+            );
+
+            if (expectedValue != actualValue) {
+                log.debug("User does not match boolean criteria key: {} in group: {}", criteriaKey, userGroupName);
+                return false;
+            }
+            return true;
+        }
+        List<String> criteriaValues = (rawCriteriaValue instanceof List<?>)
+                ? ((List<?>) rawCriteriaValue).stream()
+                        .map(value -> String.valueOf(value).toLowerCase().trim()).toList()
+                : Collections.singletonList(String.valueOf(rawCriteriaValue).toLowerCase().trim());
+
+        String userCriteriaValue = String.valueOf(userProfile.get(criteriaKey)).toLowerCase().trim();
+
+        if (StringUtils.isEmpty(userCriteriaValue) || !criteriaValues.contains(userCriteriaValue)) {
+            log.debug("User does not match criteria key: {} in group: {}", criteriaKey, userGroupName);
+            return false;
+        }
+        return true;
+    }
+
     private void getExistingContextData(String userId, String rootOrgId, Map<String, String> userProfile) {
         Map<String, Object> query = Map.of(
                 Constants.USER_ID_LOWER_CASE, userId, Constants.CONTEXT_TYPE, Constants.ORG_ADDITIONAL_PROPERTIES);
 
         List<Map<String, Object>> rows = cassandraOperation.getRecordsByProperties(
                 Constants.KEYSPACE_SUNBIRD, Constants.TABLE_USER_EXTENDED_PROFILE, query, null, null);
-        if (rows != null && !rows.isEmpty()) {
-            String json = (String) rows.get(0).get(Constants.CONTEXT_DATA_KEY);
-            try {
-                TypeReference<List<Map<String, Object>>> typeRef = new TypeReference<>() {
-                };
-                List<Map<String, Object>> orgAdditionalProperties = mapper.readValue(json, typeRef);
+        if (rows == null || rows.isEmpty()) {
+            return;
+        }
+        String json = (String) rows.get(0).get(Constants.CONTEXT_DATA_KEY);
+        try {
+            TypeReference<List<Map<String, Object>>> typeRef = new TypeReference<>() {
+            };
+            List<Map<String, Object>> orgAdditionalProperties = mapper.readValue(json, typeRef);
 
-                if (CollectionUtils.isNotEmpty(orgAdditionalProperties)) {
-                    for (Map<String, Object> orgAdditionalProperty : orgAdditionalProperties) {
-                        String orgId = (String) orgAdditionalProperty.get(Constants.ORGANISATION_ID);
-                        if (orgId.equals(rootOrgId)) {
-                            Object customFieldValuesObj = orgAdditionalProperty.get(Constants.CUSTOM_FIELD_VALUES);
-                            List<Map<String, Object>> customFieldValuesList = (List<Map<String, Object>>) customFieldValuesObj;
-                            if (CollectionUtils.isNotEmpty(customFieldValuesList)) {
-                                for (Map<String, Object> customFields : customFieldValuesList) {
-                                    String type = (String) customFields.get(Constants.TYPE);
-                                    if (Constants.TEXT.equalsIgnoreCase(type)) {
-                                        userProfile.put(((String) customFields.get(Constants.ATTRIBUTE_NAME)).toLowerCase(), (String) customFields.get(Constants.VALUE));
-                                    } else if (Constants.MASTER_LIST.equalsIgnoreCase(type)) {
-                                        List<Map<String, Object>> valuesList = (List<Map<String, Object>>) customFields.get(Constants.VALUES);
-                                        if (CollectionUtils.isNotEmpty(valuesList)) {
-                                            for (Map<String, Object> valueMap : valuesList) {
-                                                userProfile.put(((String) valueMap.get(Constants.ATTRIBUTE_NAME)).toLowerCase(), (String) valueMap.get(Constants.VALUE));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+            if (CollectionUtils.isNotEmpty(orgAdditionalProperties)) {
+                for (Map<String, Object> orgAdditionalProperty : orgAdditionalProperties) {
+                    applyOrgAdditionalProperty(orgAdditionalProperty, rootOrgId, userProfile);
                 }
-            } catch (IOException e) {
-                log.error("Error parsing existing data for userId: {}, contextType: {}", userId, Constants.ORG_ADDITIONAL_PROPERTIES);
+            }
+        } catch (IOException e) {
+            log.error("Error parsing existing data for userId: {}, contextType: {}", userId, Constants.ORG_ADDITIONAL_PROPERTIES);
+        }
+    }
+
+    private void applyOrgAdditionalProperty(Map<String, Object> orgAdditionalProperty, String rootOrgId,
+                                             Map<String, String> userProfile) {
+        String orgId = (String) orgAdditionalProperty.get(Constants.ORGANISATION_ID);
+        if (!orgId.equals(rootOrgId)) {
+            return;
+        }
+        Object customFieldValuesObj = orgAdditionalProperty.get(Constants.CUSTOM_FIELD_VALUES);
+        List<Map<String, Object>> customFieldValuesList = (List<Map<String, Object>>) customFieldValuesObj;
+        if (CollectionUtils.isEmpty(customFieldValuesList)) {
+            return;
+        }
+        for (Map<String, Object> customFields : customFieldValuesList) {
+            applyCustomField(customFields, userProfile);
+        }
+    }
+
+    private void applyCustomField(Map<String, Object> customFields, Map<String, String> userProfile) {
+        String type = (String) customFields.get(Constants.TYPE);
+        if (Constants.TEXT.equalsIgnoreCase(type)) {
+            userProfile.put(((String) customFields.get(Constants.ATTRIBUTE_NAME)).toLowerCase(), (String) customFields.get(Constants.VALUE));
+        } else if (Constants.MASTER_LIST.equalsIgnoreCase(type)) {
+            List<Map<String, Object>> valuesList = (List<Map<String, Object>>) customFields.get(Constants.VALUES);
+            if (CollectionUtils.isNotEmpty(valuesList)) {
+                for (Map<String, Object> valueMap : valuesList) {
+                    userProfile.put(((String) valueMap.get(Constants.ATTRIBUTE_NAME)).toLowerCase(), (String) valueMap.get(Constants.VALUE));
+                }
             }
         }
     }
@@ -550,28 +587,18 @@ public class CbPlanLearnerServiceImpl {
             }
 
             logger.info("getCBPlanCourseListForUser :: UserId of the User : {}", userId);
-            Map<String, String> courseMap = new HashMap<>();
+            Map<String, String> courseMap;
             String redisKey = "cbplan:userlookup:" + userId + ":course";
             String cachedData = redisCacheMgr.getFromCache(redisKey);
 
             if (StringUtils.isNotBlank(cachedData)) {
-                try {
-                    courseMap = mapper.readValue(cachedData, new TypeReference<Map<String, String>>() {
-                    });
-                } catch (Exception e) {
-                    logger.error("Failed to parse cached course map for userId: {}. Exception: {}", userId, e.getMessage(), e);
-                }
+                courseMap = parseCachedCourseMap(cachedData, userId);
             } else {
                 getCBPlanListForUser(userOrgId, userId, true);
                 cachedData = redisCacheMgr.getFromCache(redisKey);
-                if (StringUtils.isNotBlank(cachedData)) {
-                    try {
-                        courseMap = mapper.readValue(cachedData, new TypeReference<Map<String, String>>() {
-                        });
-                    } catch (Exception e) {
-                        logger.error("Failed to parse cached course map for userId: {}. Exception: {}", userId, e.getMessage(), e);
-                    }
-                }
+                courseMap = StringUtils.isNotBlank(cachedData)
+                        ? parseCachedCourseMap(cachedData, userId)
+                        : new HashMap<>();
             }
             response.getResult().put("contents", courseMap);
             response.getParams().setStatus(Constants.SUCCESS);
@@ -583,6 +610,16 @@ public class CbPlanLearnerServiceImpl {
             response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
         }
         return response;
+    }
+
+    private Map<String, String> parseCachedCourseMap(String cachedData, String userId) {
+        try {
+            return mapper.readValue(cachedData, new TypeReference<Map<String, String>>() {
+            });
+        } catch (Exception e) {
+            logger.error("Failed to parse cached course map for userId: {}. Exception: {}", userId, e.getMessage(), e);
+            return new HashMap<>();
+        }
     }
 
     public void removeDuplicateCoursesAcrossPlans(List<Map<String, Object>> resultMap) {

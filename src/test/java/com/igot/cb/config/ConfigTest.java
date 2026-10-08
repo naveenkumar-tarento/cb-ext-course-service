@@ -1,46 +1,71 @@
 package com.igot.cb.config;
 
-import org.junit.jupiter.api.BeforeEach;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
+import org.springframework.kafka.core.ConsumerFactory;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.core.ProducerFactory;
+import org.springframework.test.util.ReflectionTestUtils;
+import redis.clients.jedis.JedisPool;
+
+import com.igot.cb.util.Constants;
+import com.igot.cb.util.PropertiesCache;
+
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.when;
 
 class ConfigTest {
 
-    @Mock
-    private ConsumerConfiguration consumerConfiguration;
+    @Test
+    void testConsumerConfiguration() {
+        ConsumerConfiguration consumerConfiguration = new ConsumerConfiguration();
+        ReflectionTestUtils.setField(consumerConfiguration, "kafkabootstrapAddress", "localhost:9092");
+        ReflectionTestUtils.setField(consumerConfiguration, "kafkaOffsetResetValue", "earliest");
+        ReflectionTestUtils.setField(consumerConfiguration, "kafkaMaxPollInterval", 300000);
+        ReflectionTestUtils.setField(consumerConfiguration, "kafkaMaxPollRecords", 500);
+        ReflectionTestUtils.setField(consumerConfiguration, "kafkaAutoCommitInterval", 1000);
 
-    @Mock
-    private ProducerConfiguration producerConfiguration;
+        Map<String, Object> configs = consumerConfiguration.consumerConfigs();
+        assertEquals("localhost:9092", configs.get(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG));
+        assertEquals("earliest", configs.get(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG));
 
-    @Mock
-    private RedisConfig redisConfig;
-
-    @BeforeEach
-    void setUp() {
-        MockitoAnnotations.openMocks(this);
+        ConsumerFactory<String, String> consumerFactory = consumerConfiguration.consumerFactory();
+        assertNotNull(consumerFactory);
     }
 
-    // @Test
-    // void testConsumerConfiguration() {
-    //     // Updated to mock a valid getBootstrapServers method
-    //     when(consumerConfiguration.getBootstrapServers()).thenReturn("localhost:9092");
-    //     String bootstrapServers = consumerConfiguration.getBootstrapServers();
-    //     assertEquals("localhost:9092", bootstrapServers);
-    // }
+    @Test
+    void testProducerConfiguration() {
+        ProducerConfiguration producerConfiguration = new ProducerConfiguration();
+        ReflectionTestUtils.setField(producerConfiguration, "kafkabootstrapAddress", "localhost:9092");
 
-    // @Test
-    // void testProducerConfiguration() {
-    //     // Updated to mock a valid getBootstrapServers method
-    //     when(producerConfiguration.getBootstrapServers()).thenReturn("localhost:9092");
-    //     String bootstrapServers = producerConfiguration.getBootstrapServers();
-    //     assertEquals("localhost:9092", bootstrapServers);
-    // }
+        ProducerFactory<String, String> producerFactory = producerConfiguration.producerFactory();
+        assertNotNull(producerFactory);
+        assertEquals("localhost:9092",
+                producerFactory.getConfigurationProperties().get(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG));
 
-    // @Test
-    // void testRedisConfig() {
-    //     // Updated to mock a valid getHost method
-    //     when(redisConfig.getHost()).thenReturn("localhost");
-    //     String host = redisConfig.getHost();
-    //     assertEquals("localhost", host);
-    // }
+        KafkaTemplate<String, String> kafkaTemplate = producerConfiguration.kafkaTemplate();
+        assertNotNull(kafkaTemplate);
+    }
+
+    @Test
+    void testRedisConfig() {
+        try (MockedStatic<PropertiesCache> mockedStatic = mockStatic(PropertiesCache.class)) {
+            PropertiesCache mockCache = mock(PropertiesCache.class);
+            mockedStatic.when(PropertiesCache::getInstance).thenReturn(mockCache);
+            when(mockCache.getProperty(Constants.REDIS_HOST)).thenReturn("localhost");
+            when(mockCache.getProperty(Constants.REDIS_PORT)).thenReturn("6379");
+
+            RedisConfig redisConfig = new RedisConfig();
+            JedisPool jedisPool = redisConfig.jedisPool();
+
+            assertNotNull(jedisPool);
+        }
+    }
 }

@@ -12,12 +12,10 @@ import com.igot.cb.util.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
-import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -119,17 +117,7 @@ class CbPlanServiceImplTest {
 
     @Test
     void testCreateCbPlan_JsonProcessingException() {
-        ApiRequest request = new ApiRequest();
-        CbPlanDto dto = new CbPlanDto();
-        // Missing required fields to trigger validation error first
-        request.setRequest(dto);
-
-        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("userId");
-
-        ApiResponse response = cbPlanService.createCbPlan(request, "orgId", "token");
-
-        assertEquals(Constants.FAILED, response.getParams().getStatus());
-        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
+        testCreateCbPlan_ValidationErrors();
     }
 
     @Test
@@ -374,7 +362,7 @@ class CbPlanServiceImplTest {
         assertNotNull(response);
         assertEquals(Constants.SUCCESS, response.getParams().getStatus());
         } catch (Exception e) {
-
+            // ignored: this test only verifies the success path above
         }
     }
 
@@ -864,7 +852,7 @@ class CbPlanServiceImplTest {
 
     @Test
     @Disabled("This test is ignored due to optimization code changes")
-    void testEnrichUserInfo() throws Exception {
+    void testEnrichUserInfo() {
         Map<String, Map<String, String>> userInfoMap = new HashMap<>();
         Map<String, String> userDetails = new HashMap<>();
         userDetails.put("firstName", "Test");
@@ -878,7 +866,7 @@ class CbPlanServiceImplTest {
 
     @Test
     @Disabled("This test is ignored due to optimization code changes")
-    void testPopulateReadData() throws Exception {
+    void testPopulateReadData() {
         Map<String, Object> cbPlan = new HashMap<>();
         cbPlan.put("contentList", Arrays.asList("content1"));
         cbPlan.put("createdBy", "userId");
@@ -1254,7 +1242,7 @@ class CbPlanServiceImplTest {
 
     @SuppressWarnings("unchecked")
     @Test
-    void testPopulateReadData_NullDraftData() throws Exception {
+    void testPopulateReadData_NullDraftData() {
         Map<String, Object> cbPlan = new HashMap<>();
         cbPlan.put("name", "Test Plan");
         cbPlan.put("contentType", "Course");
@@ -1286,7 +1274,7 @@ class CbPlanServiceImplTest {
 
     @SuppressWarnings("unchecked")
     @Test
-    void testPopulateReadData_WithDraftStatus() throws Exception {
+    void testPopulateReadData_WithDraftStatus() {
         // Arrange
         Map<String, Object> cbPlan = new HashMap<>();
         cbPlan.put(Constants.DRAFT_DATA,
@@ -1590,7 +1578,7 @@ class CbPlanServiceImplTest {
             .thenThrow(new RuntimeException("Test exception"));
 
         try {
-            ApiResponse response = cbPlanService.searchCbPlan(criteria, "orgId", "token");
+            cbPlanService.searchCbPlan(criteria, "orgId", "token");
             fail("Expected CustomException to be thrown");
         } catch (Exception e) {
             assertTrue(e.getMessage().contains("error while processing"));
@@ -1769,7 +1757,7 @@ class CbPlanServiceImplTest {
     }
 
     @Test
-    void testUpdateCbPlan_DraftPlanValidationError() throws Exception {
+    void testUpdateCbPlan_DraftPlanValidationError() {
         when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("u1");
 
         Map<String, Object> existing = new HashMap<>();
@@ -1790,7 +1778,7 @@ class CbPlanServiceImplTest {
 
 
     @Test
-    void testUpdateCbPlan_DraftPlanUpdateFailure() throws Exception {
+    void testUpdateCbPlan_DraftPlanUpdateFailure() {
         when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("u1");
 
         Map<String, Object> existing = new HashMap<>();
@@ -1961,7 +1949,7 @@ class CbPlanServiceImplTest {
     }
 
     @Test
-    void testHandleUpdateOfLiveCbPlan_Success() throws Exception {
+    void testHandleUpdateOfLiveCbPlan_Success() {
         ApiResponse response = new ApiResponse();
         response.setParams(new ApiRespParam());
         response.setResult(new HashMap<>());
@@ -2353,16 +2341,7 @@ class CbPlanServiceImplTest {
 
     @Test
     void testUpsertCbPlanContentLookup_FixedFieldName() {
-        List<String> contentIds = Arrays.asList("content1");
-        Set<String> existingPlanIds = new HashSet<>(Arrays.asList("plan2"));
-        
-        Map<String, Object> existingRecord = Map.of("planId", existingPlanIds);
-        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), any(), any(), anyInt()))
-            .thenReturn(Arrays.asList(existingRecord));
-        
-        ReflectionTestUtils.invokeMethod(cbPlanService, "upsertCbPlanContentLookup", "plan1", contentIds);
-        
-        verify(cassandraOperation).updateRecord(anyString(), anyString(), any(), any());
+        testUpsertCbPlanContentLookup_ExistingContent();
     }
 
 }

@@ -20,7 +20,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-public class VideoOnDemandKafkaConsumerTest {
+class VideoOnDemandKafkaConsumerTest {
 
     @Mock
     private ObjectMapper mapper;
@@ -54,26 +54,23 @@ public class VideoOnDemandKafkaConsumerTest {
         when(outboundRequestHandlerService.fetchResultUsingPatch(anyString(), any(), any())).thenReturn(mockResponse);
     
         videoOnDemandKafkaConsumer.contentMetadataUpdateConsumerForVOD(consumerRecord);
-    
-        try {
-            Thread.sleep(100);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-        verify(mapper).readValue(eq(validJsonMessage), any(TypeReference.class));
+
+        verify(mapper, timeout(1000)).readValue(eq(validJsonMessage), any(TypeReference.class));
+        verify(outboundRequestHandlerService, timeout(1000)).fetchResultUsingPatch(anyString(), any(), any());
     }
 
     @Test
     void test_content_metadata_update_consumer_handles_blank_message_gracefully() {
         ConsumerRecord<String, String> consumerRecordWithBlank = new ConsumerRecord<>("test-topic", 0, 0L, "key", "");
         ConsumerRecord<String, String> consumerRecordWithNull = new ConsumerRecord<>("test-topic", 0, 0L, "key", null);
-    
+
         videoOnDemandKafkaConsumer.contentMetadataUpdateConsumerForVOD(consumerRecordWithBlank);
         videoOnDemandKafkaConsumer.contentMetadataUpdateConsumerForVOD(consumerRecordWithNull);
 
         try {
             verify(mapper, never()).readValue(anyString(), any(TypeReference.class));
         } catch (JsonProcessingException e) {
+            // not expected: verify(never()) does not invoke the real method
         }
         verify(outboundRequestHandlerService, never()).fetchResultUsingPatch(anyString(), any(), any());
     }
@@ -87,13 +84,8 @@ public class VideoOnDemandKafkaConsumerTest {
             .thenThrow(new JsonProcessingException("Invalid JSON") {});
     
         videoOnDemandKafkaConsumer.contentMetadataUpdateConsumerForVOD(consumerRecord);
-    
-        try {
-            Thread.sleep(100);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-        verify(mapper).readValue(eq(invalidJsonMessage), any(TypeReference.class));
+
+        verify(mapper, timeout(1000)).readValue(eq(invalidJsonMessage), any(TypeReference.class));
         verify(outboundRequestHandlerService, never()).fetchResultUsingPatch(anyString(), any(), any());
     }
 
@@ -108,13 +100,8 @@ public class VideoOnDemandKafkaConsumerTest {
         when(mapper.readValue(eq(messageWithMissingFields), any(TypeReference.class))).thenReturn(messageData);
     
         videoOnDemandKafkaConsumer.contentMetadataUpdateConsumerForVOD(consumerRecord);
-    
-        try {
-            Thread.sleep(100);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-        verify(mapper).readValue(eq(messageWithMissingFields), any(TypeReference.class));
+
+        verify(mapper, timeout(1000)).readValue(eq(messageWithMissingFields), any(TypeReference.class));
         verify(outboundRequestHandlerService, never()).fetchResultUsingPatch(anyString(), any(), any());
     }
 
@@ -138,13 +125,8 @@ public class VideoOnDemandKafkaConsumerTest {
         when(outboundRequestHandlerService.fetchResultUsingPatch(anyString(), any(), any())).thenReturn(errorResponse);
     
         videoOnDemandKafkaConsumer.contentMetadataUpdateConsumerForVOD(consumerRecord);
-    
-        try {
-            Thread.sleep(100);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-        verify(outboundRequestHandlerService).fetchResultUsingPatch(anyString(), any(), any());
+
+        verify(outboundRequestHandlerService, timeout(1000)).fetchResultUsingPatch(anyString(), any(), any());
     }
 
     @Test
@@ -167,13 +149,8 @@ public class VideoOnDemandKafkaConsumerTest {
         when(outboundRequestHandlerService.fetchResultUsingPatch(anyString(), any(), any())).thenReturn(mockResponse);
     
         videoOnDemandKafkaConsumer.contentMetadataUpdateConsumerForVOD(consumerRecord);
-    
-        try {
-            Thread.sleep(100);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-        verify(outboundRequestHandlerService).fetchResultUsingPatch(
+
+        verify(outboundRequestHandlerService, timeout(1000)).fetchResultUsingPatch(
             eq("https://api.example.com/update/test-id-123"),
             any(Map.class),
             any(Map.class)

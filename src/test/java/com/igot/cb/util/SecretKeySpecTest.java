@@ -35,7 +35,7 @@ class SecretKeySpecTest {
     @Test
     void testHashCode() {
         int hashCode = secretKeySpec.hashCode();
-        assertTrue(hashCode != 0);
+        assertNotEquals(0, hashCode);
     }
 
     @Test
@@ -43,10 +43,10 @@ class SecretKeySpecTest {
         SecretKeySpec other = new SecretKeySpec();
         other.postConstruct();
         
-        assertTrue(secretKeySpec.equals(secretKeySpec));
-        assertTrue(secretKeySpec.equals(other));
-        assertFalse(secretKeySpec.equals(null));
-        assertFalse(secretKeySpec.equals("not a secret key"));
+        assertEquals(secretKeySpec, secretKeySpec);
+        assertEquals(secretKeySpec, other);
+        assertNotEquals(null, secretKeySpec);
+        assertNotEquals("not a secret key", secretKeySpec);
     }
 
     @Test
@@ -68,7 +68,7 @@ class SecretKeySpecTest {
             }
         };
         
-        assertFalse(secretKeySpec.equals(mockKey));
+        assertNotEquals(secretKeySpec, mockKey);
     }
 
     @Test
@@ -102,7 +102,7 @@ class SecretKeySpecTest {
             }
         };
         
-        assertTrue(tripleDESKey.equals(desedeKey));
+        assertEquals(tripleDESKey, desedeKey);
     }
 
     @Test
@@ -119,7 +119,7 @@ class SecretKeySpecTest {
         }
         
         int hashCode = tripleDESKey.hashCode();
-        assertTrue(hashCode != 0);
+        assertNotEquals(0, hashCode);
     }
 
     @Test
@@ -141,6 +141,6 @@ class SecretKeySpecTest {
             }
         };
         
-        assertFalse(secretKeySpec.equals(differentKey));
+        assertNotEquals(secretKeySpec, differentKey);
     }
 }

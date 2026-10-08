@@ -140,7 +140,6 @@ public class UserAndOrgServiceImpl {
         return userProfileBitMap;
     }
 
-    @SuppressWarnings("unchecked")
     private void setUserProfile(Map<String, String> userProfile, Map<String, Object> userBasicProfile) throws JsonProcessingException {
         if (MapUtils.isEmpty(userBasicProfile)) {
             log.warn("User basic profile is empty for userId: {}", userProfile.get(Constants.ID));
@@ -148,45 +147,52 @@ public class UserAndOrgServiceImpl {
         }
         putIfNotNullOrEmpty(userProfile, Constants.USER, (String) userBasicProfile.get(Constants.ID));
         putIfNotNullOrEmpty(userProfile, Constants.ROOT_ORG_ID.toLowerCase(), (String) userBasicProfile.get(Constants.ROOT_ORG_ID));
-        Object rawValue = userBasicProfile.get(Constants.PROFILE_DETAILS);
-        Map<String, Object> profileDetails;
+        Map<String, Object> profileDetails = resolveProfileDetails(userBasicProfile.get(Constants.PROFILE_DETAILS));
 
-        if (rawValue instanceof String) {
-            profileDetails = mapper.readValue((String) rawValue, new TypeReference<Map<String, Object>>() {});
+        if (!MapUtils.isEmpty(profileDetails)) {
+            applyProfileDetails(userProfile, profileDetails);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> resolveProfileDetails(Object rawValue) throws JsonProcessingException {
+        if (rawValue instanceof String strValue) {
+            return mapper.readValue(strValue, new TypeReference<Map<String, Object>>() {});
         } else if (rawValue instanceof Map) {
-            profileDetails = (Map<String, Object>) rawValue;
+            return (Map<String, Object>) rawValue;
         } else {
             throw new IllegalArgumentException("Unsupported type for profileDetails: " + rawValue);
         }
+    }
 
-        if (!MapUtils.isEmpty(profileDetails)) {
-            List<Map<String, Object>> professionalDetailList = (List<Map<String, Object>>) profileDetails
-                    .get(Constants.PROFESSIONAL_DETAILS);
-            if (CollectionUtils.isNotEmpty(professionalDetailList)) {
-                Map<String, Object> professionalDetails = professionalDetailList.get(0);
-                putIfNotNullOrEmpty(userProfile, Constants.DESIGNATION, (String) professionalDetails.get(Constants.DESIGNATION));
-                putIfNotNullOrEmpty(userProfile, Constants.GROUP, (String) professionalDetails.get(Constants.GROUP));
-            }
-            putIfNotNullOrEmpty(userProfile, Constants.PROFILE_STATUS_KEY.toLowerCase(),
-                    (String) profileDetails.get(Constants.PROFILE_STATUS_KEY));
-            Map<String, Object> cadreDetails = (Map<String, Object>) profileDetails.get(Constants.CADRE_DETAILS);
-
-            if (MapUtils.isNotEmpty(cadreDetails)) {
-                putIfNotNullOrEmpty(userProfile, Constants.CADRE, (String) cadreDetails.get(Constants.CADRE_NAME));
-                putIfNotNullOrEmpty(userProfile, Constants.SERVICE, (String) cadreDetails.get(Constants.CIVIL_SERVICE_NAME));
-                if (cadreDetails.containsKey(Constants.CADRE_BATCH)) {
-                    putIfNotNullOrEmpty(userProfile, Constants.BATCH, String.valueOf(cadreDetails.get(Constants.CADRE_BATCH)));
-                }
-                if (cadreDetails.containsKey(Constants.CENTRAL_DEPUTATION)) {
-                    putIfNotNullOrEmpty(userProfile, Constants.CENTRAL_DEPUTATION, String.valueOf(cadreDetails.get(Constants.CENTRAL_DEPUTATION)));
-                } else {
-                    userProfile.put(Constants.CENTRAL_DEPUTATION, "false");
-                }
-            }
-            checkUserTaggedUnderRozgarMela(userProfile, profileDetails);
-            putIfNotNullOrEmpty(userProfile, Constants.MINISTRY_OR_STATEID, (String) profileDetails.get(Constants.MINISTRY_OR_STATEID));
-            putIfNotNullOrEmpty(userProfile, Constants.MINISTRY_OR_STATETYPE, (String) profileDetails.get(Constants.MINISTRY_OR_STATETYPE));
+    @SuppressWarnings("unchecked")
+    private void applyProfileDetails(Map<String, String> userProfile, Map<String, Object> profileDetails) {
+        List<Map<String, Object>> professionalDetailList = (List<Map<String, Object>>) profileDetails
+                .get(Constants.PROFESSIONAL_DETAILS);
+        if (CollectionUtils.isNotEmpty(professionalDetailList)) {
+            Map<String, Object> professionalDetails = professionalDetailList.get(0);
+            putIfNotNullOrEmpty(userProfile, Constants.DESIGNATION, (String) professionalDetails.get(Constants.DESIGNATION));
+            putIfNotNullOrEmpty(userProfile, Constants.GROUP, (String) professionalDetails.get(Constants.GROUP));
         }
+        putIfNotNullOrEmpty(userProfile, Constants.PROFILE_STATUS_KEY.toLowerCase(),
+                (String) profileDetails.get(Constants.PROFILE_STATUS_KEY));
+        Map<String, Object> cadreDetails = (Map<String, Object>) profileDetails.get(Constants.CADRE_DETAILS);
+
+        if (MapUtils.isNotEmpty(cadreDetails)) {
+            putIfNotNullOrEmpty(userProfile, Constants.CADRE, (String) cadreDetails.get(Constants.CADRE_NAME));
+            putIfNotNullOrEmpty(userProfile, Constants.SERVICE, (String) cadreDetails.get(Constants.CIVIL_SERVICE_NAME));
+            if (cadreDetails.containsKey(Constants.CADRE_BATCH)) {
+                putIfNotNullOrEmpty(userProfile, Constants.BATCH, String.valueOf(cadreDetails.get(Constants.CADRE_BATCH)));
+            }
+            if (cadreDetails.containsKey(Constants.CENTRAL_DEPUTATION)) {
+                putIfNotNullOrEmpty(userProfile, Constants.CENTRAL_DEPUTATION, String.valueOf(cadreDetails.get(Constants.CENTRAL_DEPUTATION)));
+            } else {
+                userProfile.put(Constants.CENTRAL_DEPUTATION, "false");
+            }
+        }
+        checkUserTaggedUnderRozgarMela(userProfile, profileDetails);
+        putIfNotNullOrEmpty(userProfile, Constants.MINISTRY_OR_STATEID, (String) profileDetails.get(Constants.MINISTRY_OR_STATEID));
+        putIfNotNullOrEmpty(userProfile, Constants.MINISTRY_OR_STATETYPE, (String) profileDetails.get(Constants.MINISTRY_OR_STATETYPE));
     }
 
     private void getUserBitMap(Map<String, String> userProfile, Map<String, Integer> userProfileBitMap) {
@@ -207,27 +213,33 @@ public class UserAndOrgServiceImpl {
 
         for (Map.Entry<String, String> entry : userProfile.entrySet()) {
             String rawValue = entry.getValue();
-            if (rawValue == null) continue;
-
-            String encodedValue;
-            try {
-                encodedValue = new URI(null, rawValue, null).toASCIIString();
-            } catch (URISyntaxException e) {
-                log.error("Failed to encode value '{}' for key '{}'", rawValue, entry.getKey(), e);
-                continue;
+            if (rawValue != null) {
+                mapUserBitMapEntry(entry, rawValue, idResultMap, userProfile, userProfileBitMap);
             }
+        }
+    }
 
-            Integer mappedValue = idResultMap.get(encodedValue.toLowerCase());
-            if (mappedValue == null) {
-                mappedValue = idResultMap.get(rawValue.toLowerCase());
-            }
+    private void mapUserBitMapEntry(Map.Entry<String, String> entry, String rawValue,
+            Map<String, Integer> idResultMap, Map<String, String> userProfile,
+            Map<String, Integer> userProfileBitMap) {
+        String encodedValue;
+        try {
+            encodedValue = new URI(null, rawValue, null).toASCIIString();
+        } catch (URISyntaxException e) {
+            log.error("Failed to encode value '{}' for key '{}'", rawValue, entry.getKey(), e);
+            return;
+        }
 
-            if (mappedValue != null) {
-                userProfileBitMap.put(entry.getKey().toLowerCase(), mappedValue);
-            } else {
-                log.warn("ID-Map does not contain value for User: {}, Key: {}, RawValue: {}, EncodedValue: {}",
-                        userProfile.get(Constants.USER), entry.getKey(), rawValue, encodedValue);
-            }
+        Integer mappedValue = idResultMap.get(encodedValue.toLowerCase());
+        if (mappedValue == null) {
+            mappedValue = idResultMap.get(rawValue.toLowerCase());
+        }
+
+        if (mappedValue != null) {
+            userProfileBitMap.put(entry.getKey().toLowerCase(), mappedValue);
+        } else {
+            log.warn("ID-Map does not contain value for User: {}, Key: {}, RawValue: {}, EncodedValue: {}",
+                    userProfile.get(Constants.USER), entry.getKey(), rawValue, encodedValue);
         }
     }
 

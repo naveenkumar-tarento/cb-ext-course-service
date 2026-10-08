@@ -28,19 +28,19 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class CbPlanLearnerServiceImplTest {
 
-    @Mock(lenient = true)
+    @Mock(strictness = Mock.Strictness.LENIENT)
     private AccessTokenValidator accessTokenValidator;
 
-    @Mock(lenient = true)
+    @Mock(strictness = Mock.Strictness.LENIENT)
     private CassandraOperation cassandraOperation;
 
-    @Mock(lenient = true)
+    @Mock(strictness = Mock.Strictness.LENIENT)
     private ContentInfoServiceImpl contentService;
 
-    @Mock(lenient = true)
+    @Mock(strictness = Mock.Strictness.LENIENT)
     private CbPlanCacheMgr cbPlanCacheMgr;
 
-    @Mock(lenient = true)
+    @Mock(strictness = Mock.Strictness.LENIENT)
     private RedisCacheMgr redisCacheMgr;
 
 
@@ -228,7 +228,7 @@ class CbPlanLearnerServiceImplTest {
     }
 
     @Test
-    @Disabled
+    @Disabled("This test is ignored due to optimization code changes")
     void testSetUserProfile_ValidData() throws Exception {
         Map<String, String> userProfile = new HashMap<>();
         Map<String, Object> userBasicProfile = createUserData();
@@ -356,7 +356,6 @@ class CbPlanLearnerServiceImplTest {
     @Test
     void testGetExistingContextData_WithCustomFields() throws Exception {
         Map<String, String> userProfile = new HashMap<>();
-        Map<String, Object> userBasicProfile = createUserData();
 
         // Prepare custom field TEXT type
         Map<String, Object> customFieldText = new HashMap<>();
@@ -482,7 +481,10 @@ class CbPlanLearnerServiceImplTest {
         Method m = CbPlanLearnerServiceImpl.class.getDeclaredMethod("getExistingContextData",
                 String.class, String.class, Map.class);
         m.setAccessible(true);
-        m.invoke(service, "user123", "org123", new HashMap<>());
+        Map<String, String> userProfile = new HashMap<>();
+        m.invoke(service, "user123", "org123", userProfile);
+
+        assertTrue(userProfile.isEmpty());
     }
 
     @Test
@@ -509,7 +511,13 @@ class CbPlanLearnerServiceImplTest {
                 List.class, String.class, String.class, Map.class, AtomicBoolean.class, List.class);
         method.setAccessible(true);
 
-        method.invoke(service, activePlans, "org123", "user123", new HashMap<>(), isCacheEnabled, new ArrayList<>());
+        List<Map<String, Object>> resultMap = new ArrayList<>();
+        method.invoke(service, activePlans, "org123", "user123", new HashMap<>(), isCacheEnabled, resultMap);
+
+        // Invalid/unparseable contextData is treated as "no access restriction" (fail-open), so the plan
+        // is still included rather than skipped.
+        assertEquals(1, resultMap.size());
+        assertEquals("plan123", resultMap.get(0).get(Constants.ID));
     }
 
     @Test

@@ -8,9 +8,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.time.Instant;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.igot.cb.cassandra.CassandraOperation;
 import com.igot.cb.elasticsearch.dto.SearchCriteria;
@@ -24,7 +22,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
-public class CbPlanServiceImplFullTest {
+class CbPlanServiceImplFullTest {
 
     @Mock private AccessTokenValidator accessTokenValidator;
     @Mock private CassandraOperation cassandraOperation;
@@ -54,17 +52,6 @@ public class CbPlanServiceImplFullTest {
         ReflectionTestUtils.setField(cbPlanService, "contentService", contentService);
         ReflectionTestUtils.setField(cbPlanService, "esUtilService", esUtilService);
         ReflectionTestUtils.setField(cbPlanService, "serverProperties", serverProperties);
-    }
-
-    private Map<String, Object> minimalPlan() {
-        Map<String, Object> plan = new HashMap<>();
-        plan.put("name", "Plan A");
-        plan.put("createdBy", "u1");
-        plan.put("contentList", List.of("content1"));
-        plan.put("status", "draft");
-        plan.put("draftData", "");
-        plan.put("createdAtReq", Instant.now());
-        return plan;
     }
 
     @Test
@@ -276,7 +263,7 @@ public class CbPlanServiceImplFullTest {
     }
 
     @Test
-    void extractUniqueRootOrgIds_paths() throws Exception {
+    void extractUniqueRootOrgIds_paths() {
         // empty returns empty
         @SuppressWarnings("unchecked")
         Set<String> s1 = (Set<String>) ReflectionTestUtils.invokeMethod(cbPlanService, "extractUniqueRootOrgIds", new HashMap<>());
@@ -333,7 +320,7 @@ public class CbPlanServiceImplFullTest {
     }
 
     @Test
-    void testUpsertCustomOrgLookup_success() throws Exception {
+    void testUpsertCustomOrgLookup_success() {
         ApiResponse successResponse = new ApiResponse();
         successResponse.getParams().setStatus(Constants.SUCCESS);
 
@@ -354,7 +341,7 @@ public class CbPlanServiceImplFullTest {
     }
 
     @Test
-    void testUpsertCustomOrgLookup_emptyOrgList() throws Exception {
+    void testUpsertCustomOrgLookup_emptyOrgList() {
         ApiResponse result = ReflectionTestUtils.invokeMethod(
                 cbPlanService, "upsertCustomOrgLookup",
                 "plan123", Set.of(), Instant.now(), true);
@@ -365,7 +352,7 @@ public class CbPlanServiceImplFullTest {
     }
 
     @Test
-    void testUpsertCustomOrgLookup_failureFromCassandra() throws Exception {
+    void testUpsertCustomOrgLookup_failureFromCassandra() {
         ApiResponse failResponse = new ApiResponse();
         failResponse.getParams().setStatus(Constants.FAILED);
 
@@ -383,7 +370,7 @@ public class CbPlanServiceImplFullTest {
     }
 
     @Test
-    void testUpsertCustomOrgLookup_exceptionThrown() throws Exception {
+    void testUpsertCustomOrgLookup_exceptionThrown() {
         when(cassandraOperation.insertBulkRecord(anyString(), anyString(), anyList()))
                 .thenThrow(new RuntimeException("DB error"));
 
@@ -399,7 +386,7 @@ public class CbPlanServiceImplFullTest {
     }
 
     @Test
-    void testUpsertAllOrgLookup_success() throws Exception {
+    void testUpsertAllOrgLookup_success() {
         ApiResponse successResponse = new ApiResponse();
         successResponse.getParams().setStatus(Constants.SUCCESS);
 
@@ -415,7 +402,7 @@ public class CbPlanServiceImplFullTest {
     }
 
     @Test
-    void testUpsertAllOrgLookup_exceptionThrown() throws Exception {
+    void testUpsertAllOrgLookup_exceptionThrown() {
         when(cassandraOperation.insertRecord(anyString(), anyString(), anyMap()))
                 .thenThrow(new RuntimeException("DB error"));
 
@@ -430,7 +417,7 @@ public class CbPlanServiceImplFullTest {
     }
 
     @Test
-    void testPrepareCbPlanForUpdate() throws Exception {
+    void testPrepareCbPlanForUpdate() {
         ObjectMapper mapper = new ObjectMapper();
         ReflectionTestUtils.setField(cbPlanService, "mapper", mapper);
 
@@ -466,7 +453,7 @@ public class CbPlanServiceImplFullTest {
     }
 
     @Test
-    void testPrepareCbPlanForInsert() throws Exception {
+    void testPrepareCbPlanForInsert() {
         ObjectMapper mapper = new ObjectMapper();
         ReflectionTestUtils.setField(cbPlanService, "mapper", mapper);
 
@@ -554,7 +541,7 @@ public class CbPlanServiceImplFullTest {
     }
 
     @Test
-    void testCreateCbPlan_success() throws Exception {
+    void testCreateCbPlan_success() {
         ObjectMapper mapper = new ObjectMapper();
         CbPlanServiceImpl spyService = Mockito.spy(cbPlanService);
 
@@ -628,7 +615,7 @@ public class CbPlanServiceImplFullTest {
     }
 
     @Test
-    void testCreateCbPlan_userIdEmpty() throws Exception {
+    void testCreateCbPlan_userIdEmpty() {
         ApiRequest apiRequest = new ApiRequest();
         apiRequest.setRequest(new HashMap<>());
         when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any()))
@@ -639,7 +626,7 @@ public class CbPlanServiceImplFullTest {
     }
 
     @Test
-    void testCreateCbPlan_validationFails() throws JsonProcessingException {
+    void testCreateCbPlan_validationFails() {
         ApiRequest apiRequest = new ApiRequest();
         apiRequest.setRequest(new HashMap<>());
         when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any()))

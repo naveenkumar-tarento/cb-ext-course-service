@@ -83,7 +83,10 @@ class KeyManagerTest {
         keyManager = new KeyManager();
 
         Path fakeBasePath = mock(Path.class);
-        Path fakeFilePath = Paths.get("/dummy/path/test-key.pub");
+        Path fakeFilePath = mock(Path.class);
+        Path fakeFileName = Paths.get("test-key.pub");
+        when(fakeFilePath.toString()).thenReturn("/dummy/path/test-key.pub");
+        when(fakeFilePath.getFileName()).thenReturn(fakeFileName);
 
         String keyContent = String.join("\n",
                 "-----BEGIN PUBLIC KEY-----",

@@ -1,6 +1,8 @@
 package com.igot.cb.util;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import java.io.*;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -18,43 +20,21 @@ class BASE64DecoderTest {
         assertEquals(72, decoder.bytesPerLine());
     }
 
-    @Test
-    void testDecodeAtomWithValidInput() throws IOException {
+    @ParameterizedTest
+    @CsvSource({
+            "QWxs, All",
+            "QWw=, Al",
+            "QQ==, A"
+    })
+    void testDecodeAtomWithVariousPadding(String input, String expected) throws IOException {
         BASE64Decoder decoder = new BASE64Decoder();
-        String input = "QWxs"; // "All" in base64
         PushbackInputStream inputStream = new PushbackInputStream(new ByteArrayInputStream(input.getBytes()));
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-        
-        decoder.decodeAtom(inputStream, outputStream, 4);
-        
-        byte[] result = outputStream.toByteArray();
-        assertEquals("All", new String(result));
-    }
 
-    @Test
-    void testDecodeAtomWithPadding() throws IOException {
-        BASE64Decoder decoder = new BASE64Decoder();
-        String input = "QWw="; // "Al" in base64 with padding
-        PushbackInputStream inputStream = new PushbackInputStream(new ByteArrayInputStream(input.getBytes()));
-        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-        
         decoder.decodeAtom(inputStream, outputStream, 4);
-        
-        byte[] result = outputStream.toByteArray();
-        assertEquals("Al", new String(result));
-    }
 
-    @Test
-    void testDecodeAtomWithDoublePadding() throws IOException {
-        BASE64Decoder decoder = new BASE64Decoder();
-        String input = "QQ=="; // "A" in base64 with double padding
-        PushbackInputStream inputStream = new PushbackInputStream(new ByteArrayInputStream(input.getBytes()));
-        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-        
-        decoder.decodeAtom(inputStream, outputStream, 4);
-        
         byte[] result = outputStream.toByteArray();
-        assertEquals("A", new String(result));
+        assertEquals(expected, new String(result));
     }
 
     @Test

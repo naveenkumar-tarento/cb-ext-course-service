@@ -345,9 +345,9 @@ class CassandraOperationImplTest {
     @Test
     void insertBulkRecord_Exception() {
         List<Map<String, Object>> requestList = new ArrayList<>();
-        Map<String, Object> record = new HashMap<>();
-        record.put("id", "1");
-        requestList.add(record);
+        Map<String, Object> recordMap = new HashMap<>();
+        recordMap.put("id", "1");
+        requestList.add(recordMap);
 
         try (MockedStatic<CassandraUtil> cassandraUtilMockedStatic = Mockito.mockStatic(CassandraUtil.class)) {
             cassandraUtilMockedStatic.when(() -> CassandraUtil.getPreparedStatement(anyString(), anyString(), any()))
@@ -397,10 +397,10 @@ class CassandraOperationImplTest {
         List<Map<String, Object>> requestList = new ArrayList<>();
         // Create 15 records to test batch processing
         for (int i = 0; i < 15; i++) {
-            Map<String, Object> record = new HashMap<>();
-            record.put("id", String.valueOf(i));
-            record.put("name", "Test" + i);
-            requestList.add(record);
+            Map<String, Object> recordMap = new HashMap<>();
+            recordMap.put("id", String.valueOf(i));
+            recordMap.put("name", "Test" + i);
+            requestList.add(recordMap);
         }
 
         try (MockedStatic<CassandraUtil> cassandraUtilMockedStatic = Mockito.mockStatic(CassandraUtil.class)) {

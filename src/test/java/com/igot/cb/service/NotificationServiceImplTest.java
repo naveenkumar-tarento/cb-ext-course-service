@@ -302,61 +302,61 @@ class NotificationServiceImplTest {
     @Test
     void sendNotificationForContentRetirement_emptyUsers_shouldReturn() {
 
-        notificationService.sendNotificationForContentRetirement(
+        assertDoesNotThrow(() -> notificationService.sendNotificationForContentRetirement(
                 "do_1",
                 "Course A",
                 LocalDate.now(),
                 Collections.emptyList(),
                 Constants.CONTENT_RETIREMENT_APPROVED_NOTIFICATION
-        );
+        ));
     }
 
     @Test
     void sendNotificationForContentRetirement_approved_shouldSendApprovedTemplate() {
 
-        notificationService.sendNotificationForContentRetirement(
+        assertDoesNotThrow(() -> notificationService.sendNotificationForContentRetirement(
                 "do_2",
                 "Course Approved",
                 LocalDate.of(2026, 1, 10),
                 List.of("user1"),
                 Constants.CONTENT_RETIREMENT_APPROVED_NOTIFICATION
-        );
+        ));
     }
 
     @Test
     void sendNotificationForContentRetirement_sevenDayReminder_shouldSendReminder() {
 
-        notificationService.sendNotificationForContentRetirement(
+        assertDoesNotThrow(() -> notificationService.sendNotificationForContentRetirement(
                 "do_3",
                 "Course Reminder",
                 LocalDate.of(2026, 1, 10),
                 List.of("user1"),
                 Constants.REMINDER_NOTIFICATION_SEVEN_DAY
-        );
+        ));
     }
 
     @Test
     void sendNotificationForContentRetirement_oneDayReminder_shouldSendReminder() {
 
-        notificationService.sendNotificationForContentRetirement(
+        assertDoesNotThrow(() -> notificationService.sendNotificationForContentRetirement(
                 "do_4",
                 "Course Reminder",
                 LocalDate.of(2026, 1, 10),
                 List.of("user1"),
                 Constants.REMINDER_NOTIFICATION_ONE_DAY
-        );
+        ));
     }
 
     @Test
     void sendNotificationForContentRetirement_finalRetired_shouldSendFinalNotification() {
 
-        notificationService.sendNotificationForContentRetirement(
+        assertDoesNotThrow(() -> notificationService.sendNotificationForContentRetirement(
                 "do_5",
                 "Course Retired",
                 LocalDate.of(2026, 1, 10),
                 List.of("user1"),
                 "UNKNOWN_TYPE"
-        );
+        ));
     }
 
     @Test

@@ -1,7 +1,6 @@
 package com.igot.cb.controller;
 
 import com.igot.cb.model.ApiResponse;
-import com.igot.cb.service.ContentStateServiceImpl;
 import com.igot.cb.service.LearningPathwayRetireService;
 import com.igot.cb.util.Constants;
 import org.springframework.http.ResponseEntity;

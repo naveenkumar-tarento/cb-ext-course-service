@@ -25,6 +25,8 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class AccessSettingsServiceImpl {
 
+  private static final String NO_ACCESS_SETTINGS_FOUND_MSG = "No access settings found for the given contentId";
+
   private final PayloadValidation payloadValidation;
   private final CassandraOperation cassandraOperation;
   private final AccessSettingMigrationServiceImpl accessSettingMigrationService;
@@ -93,41 +95,47 @@ public class AccessSettingsServiceImpl {
       List<Map<String, Object>> accessSettingRule = cassandraOperation.getRecordsByProperties(
           Constants.KEYSPACE_SUNBIRD_COURSE, Constants.ACCESS_SETTINGS_RULES_TABLE_V2, propertyMap,
           fields, null);
-      if (!accessSettingRule.isEmpty()) {
-        Map<String, Object> record = accessSettingRule.get(0);
-        Boolean status = (Boolean) record.get(Constants.IS_ARCHIVED_KEY);
-        if (Boolean.FALSE.equals(status)) {
-          Object contextDataObj = record.get(Constants.CONTEXT_DATA_KEY);
-          String contextDataJson = (contextDataObj instanceof String) ? (String) contextDataObj : null;
-          if (StringUtils.isNotEmpty(contextDataJson)) {
-            try {
-              Map<String, Object> contextDataMap = objectMapper.readValue(
-                  contextDataJson, new TypeReference<Map<String, Object>>() {
-                  });
-              if (!contextDataMap.isEmpty()) {
-                contextDataMap.remove(Constants.ACCESS_CONTROL_ID);
-              }
-              response.setResult(contextDataMap);
-              return response;
-            } catch (Exception e) {
-              log.error("Failed to parse CONTEXT_DATA JSON", e);
-              throw new CustomException(
-                  Constants.ERROR,
-                  "error while processing",
-                  HttpStatus.INTERNAL_SERVER_ERROR);
-            }
-          } else {
-            setFailedResponse(response, "No access settings found for the given contentId", HttpStatus.NOT_FOUND);
-            return response;
-          }
-        }
-        setFailedResponse(response, "No access settings found for the given contentId", HttpStatus.NOT_FOUND);
+      if (accessSettingRule.isEmpty()) {
+        setFailedResponse(response, NO_ACCESS_SETTINGS_FOUND_MSG, HttpStatus.NOT_FOUND);
         return response;
       }
-      setFailedResponse(response, "No access settings found for the given contentId", HttpStatus.NOT_FOUND);
-      return response;
+      return buildReadResponse(response, accessSettingRule.get(0));
     } catch (Exception e) {
       log.error("Error while reading accessRule:", e);
+      throw new CustomException(
+          Constants.ERROR,
+          "error while processing",
+          HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  private ApiResponse buildReadResponse(ApiResponse response, Map<String, Object> accessRuleRecord) {
+    Boolean status = (Boolean) accessRuleRecord.get(Constants.IS_ARCHIVED_KEY);
+    if (!Boolean.FALSE.equals(status)) {
+      setFailedResponse(response, NO_ACCESS_SETTINGS_FOUND_MSG, HttpStatus.NOT_FOUND);
+      return response;
+    }
+    Object contextDataObj = accessRuleRecord.get(Constants.CONTEXT_DATA_KEY);
+    String contextDataJson = (contextDataObj instanceof String str) ? str : null;
+    if (StringUtils.isNotEmpty(contextDataJson)) {
+      return parseContextDataResponse(response, contextDataJson);
+    }
+    setFailedResponse(response, NO_ACCESS_SETTINGS_FOUND_MSG, HttpStatus.NOT_FOUND);
+    return response;
+  }
+
+  private ApiResponse parseContextDataResponse(ApiResponse response, String contextDataJson) {
+    try {
+      Map<String, Object> contextDataMap = objectMapper.readValue(
+          contextDataJson, new TypeReference<Map<String, Object>>() {
+          });
+      if (!contextDataMap.isEmpty()) {
+        contextDataMap.remove(Constants.ACCESS_CONTROL_ID);
+      }
+      response.setResult(contextDataMap);
+      return response;
+    } catch (Exception e) {
+      log.error("Failed to parse CONTEXT_DATA JSON", e);
       throw new CustomException(
           Constants.ERROR,
           "error while processing",

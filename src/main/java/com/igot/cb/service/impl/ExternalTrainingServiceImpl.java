@@ -17,7 +17,6 @@ import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
@@ -43,29 +42,35 @@ public class ExternalTrainingServiceImpl implements ExternalTrainingService {
 
     private final Logger logger = LoggerFactory.getLogger(ExternalTrainingServiceImpl.class);
 
-    @Autowired
-    StorageService storageService;
+    private final StorageService storageService;
 
-    @Autowired
-    CbExtServerProperties serverConfig;
+    private final CbExtServerProperties serverConfig;
 
-    @Autowired
-    private KafkaTemplate kafkaTemplate;
+    private final KafkaTemplate<String, String> kafkaTemplate;
 
-    @Autowired
-    CassandraOperation cassandraOperation;
+    private final CassandraOperation cassandraOperation;
 
-    @Autowired
-    AccessTokenValidator accessTokenValidator;
+    private final AccessTokenValidator accessTokenValidator;
 
-    @Autowired
-    private ObjectMapper mapper;
+    private final ObjectMapper mapper;
 
-    @Autowired
-    private UserAndOrgServiceImpl userAndOrgService;
+    private final UserAndOrgServiceImpl userAndOrgService;
 
-    @Autowired
-    private UserUtilityService userUtilityService;
+    private final UserUtilityService userUtilityService;
+
+    public ExternalTrainingServiceImpl(StorageService storageService, CbExtServerProperties serverConfig,
+            KafkaTemplate<String, String> kafkaTemplate, CassandraOperation cassandraOperation,
+            AccessTokenValidator accessTokenValidator, ObjectMapper mapper,
+            UserAndOrgServiceImpl userAndOrgService, UserUtilityService userUtilityService) {
+        this.storageService = storageService;
+        this.serverConfig = serverConfig;
+        this.kafkaTemplate = kafkaTemplate;
+        this.cassandraOperation = cassandraOperation;
+        this.accessTokenValidator = accessTokenValidator;
+        this.mapper = mapper;
+        this.userAndOrgService = userAndOrgService;
+        this.userUtilityService = userUtilityService;
+    }
 
     @Override
     public ApiResponse externalTrainingUserBulkUpload(MultipartFile mFile, String eventId, String batchId, String authToken) {
@@ -126,7 +131,7 @@ public class ExternalTrainingServiceImpl implements ExternalTrainingService {
             response.getResult().putAll(uploadedFile);
         } catch (Exception e) {
             setErrorData(response,
-                    String.format("Failed to process event user bulk onboard request. Error: ", e.getMessage()));
+                    "Failed to process event user bulk onboard request. Error: ");
         }
         return response;
     }
@@ -138,7 +143,7 @@ public class ExternalTrainingServiceImpl implements ExternalTrainingService {
     }
 
     private boolean isFileExistForProcessing(String orgId, String eventId, String batchId) {
-        Map<String, Object> bulkUploadPrimaryKey = new HashMap<String, Object>();
+        Map<String, Object> bulkUploadPrimaryKey = new HashMap<>();
         bulkUploadPrimaryKey.put(Constants.ORD_ID, orgId);
         bulkUploadPrimaryKey.put(Constants.CONTEXT_ID_KEY, eventId);
         bulkUploadPrimaryKey.put(Constants.BATCH_ID, batchId);
@@ -229,7 +234,8 @@ public class ExternalTrainingServiceImpl implements ExternalTrainingService {
             }
             // 5. Row count validation
             int dataRowCount = 0;
-            while (reader.readLine() != null) {
+            String row;
+            while ((row = reader.readLine()) != null) {
                 dataRowCount++;
                 if (dataRowCount > externalTrainingBatchSize) {
                     return "CSV file should not contain more than " + externalTrainingBatchSize + " rows.";
@@ -273,7 +279,7 @@ public class ExternalTrainingServiceImpl implements ExternalTrainingService {
             response.getResult().put(Constants.COUNT, bulkUploadList != null ? bulkUploadList.size() : 0);
         } catch (Exception e) {
             setErrorData(response,
-                    String.format("Failed to get user event bulk onboard request status. Error: ", e.getMessage()));
+                    "Failed to get user event bulk onboard request status. Error: ");
         }
         return response;
     }
@@ -318,15 +324,6 @@ public class ExternalTrainingServiceImpl implements ExternalTrainingService {
         rootOrgId = (String) userMap.get(Constants.ROOT_ORG_ID);
 
         return rootOrgId;
-    }
-
-    private ResponseEntity<Resource> createErrorResponse(String message, HttpStatus status) {
-        HttpHeaders headers = new HttpHeaders();
-        headers.add(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE);
-
-        return ResponseEntity.status(status)
-                .headers(headers)
-                .body(new ByteArrayResource(message.getBytes()));
     }
 
     @Override

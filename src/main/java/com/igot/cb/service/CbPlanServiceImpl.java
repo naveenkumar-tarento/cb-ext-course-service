@@ -51,6 +51,11 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class CbPlanServiceImpl {
 
+    private static final String PLAN_ID_COLUMN = "planid";
+    private static final String FAILED_TO_CREATE_CB_PLAN_MSG = "Failed to Create CB Plan for OrgId: ";
+    private static final String CB_PLAN_NOT_FOUND_MSG = "cbPlan is not found for id: ";
+    private static final String FOR_CB_PLAN_ID_MSG = "for cbPlanId: ";
+
     private final AccessTokenValidator accessTokenValidator;
 
     // Configure a dedicated ObjectMapper with JavaTimeModule so Instant and other Java 8 date/time types serialize as ISO-8601
@@ -136,46 +141,51 @@ public class CbPlanServiceImpl {
                 response.setResponseCode(HttpStatus.BAD_REQUEST);
                 return response;
             }
-            try {
-                Map<String, Object> requestMap = prepareCbPlanForInsert((Map<String, Object>) request.getRequest(),
-                        userId);
-
-                ApiResponse resp = (ApiResponse) cassandraOperation.insertRecord(Constants.KEYSPACE_SUNBIRD,
-                        Constants.TABLE_CB_PLAN_V2, requestMap);
-                if (Constants.SUCCESS.equals(resp.get(Constants.RESPONSE))) {
-                    String planId = String.valueOf(requestMap.get(Constants.PLAN_ID));
-                    requestMap.put(Constants.ID, planId);
-                    List<String> contentIds =
-                            (List<String>) requestMap.get(Constants.CONTENT_LIST);
-                    if (CollectionUtils.isNotEmpty(contentIds)) {
-                        upsertCbPlanContentLookup(planId, contentIds);
-                    }
-                    requestMap.put(Constants.ID, String.valueOf(requestMap.get(Constants.PLAN_ID)));
-                    Map<String, Object> sanitizedMap = sanitizeForElastic(requestMap);
-                    esUtilService.addDocument(serverProperties.getCpPlanIndex(), Constants.INDEX_TYPE,
-                            String.valueOf(requestMap.get(Constants.PLAN_ID)),
-                            sanitizedMap, serverProperties.getElasticCbPlanJsonPath());
-                    response.getResult().put(Constants.ID, String.valueOf(requestMap.get(Constants.PLAN_ID)));
-                    response.getResult().put(Constants.STATUS, Constants.CREATED);
-                } else {
-                    response.getParams().setStatus(Constants.FAILED);
-                    response.getParams().setErr("Failed to Create CB Plan for OrgId: " + userOrgId + " message: "
-                            + resp.getParams().getErr());
-                    response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
-                }
-            } catch (JsonProcessingException e) {
-                log.error("Failed to Create CB Plan for OrgId: " + userOrgId, e);
-                response.getParams().setStatus(Constants.FAILED);
-                response.getParams().setErr(e.getMessage());
-                response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
-            }
+            insertCbPlanAndRespond(request, userId, userOrgId, response);
         } catch (Exception e) {
-            log.error("Failed to Create CB Plan for OrgId: " + userOrgId, e);
+            log.error(FAILED_TO_CREATE_CB_PLAN_MSG + userOrgId, e);
             response.getParams().setStatus(Constants.FAILED);
             response.getParams().setErr(e.getMessage());
             response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
         }
         return response;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void insertCbPlanAndRespond(ApiRequest request, String userId, String userOrgId, ApiResponse response) {
+        try {
+            Map<String, Object> requestMap = prepareCbPlanForInsert((Map<String, Object>) request.getRequest(),
+                    userId);
+
+            ApiResponse resp = (ApiResponse) cassandraOperation.insertRecord(Constants.KEYSPACE_SUNBIRD,
+                    Constants.TABLE_CB_PLAN_V2, requestMap);
+            if (Constants.SUCCESS.equals(resp.get(Constants.RESPONSE))) {
+                String planId = String.valueOf(requestMap.get(Constants.PLAN_ID));
+                requestMap.put(Constants.ID, planId);
+                List<String> contentIds =
+                        (List<String>) requestMap.get(Constants.CONTENT_LIST);
+                if (CollectionUtils.isNotEmpty(contentIds)) {
+                    upsertCbPlanContentLookup(planId, contentIds);
+                }
+                requestMap.put(Constants.ID, String.valueOf(requestMap.get(Constants.PLAN_ID)));
+                Map<String, Object> sanitizedMap = sanitizeForElastic(requestMap);
+                esUtilService.addDocument(serverProperties.getCpPlanIndex(), Constants.INDEX_TYPE,
+                        String.valueOf(requestMap.get(Constants.PLAN_ID)),
+                        sanitizedMap, serverProperties.getElasticCbPlanJsonPath());
+                response.getResult().put(Constants.ID, String.valueOf(requestMap.get(Constants.PLAN_ID)));
+                response.getResult().put(Constants.STATUS, Constants.CREATED);
+            } else {
+                response.getParams().setStatus(Constants.FAILED);
+                response.getParams().setErr(FAILED_TO_CREATE_CB_PLAN_MSG + userOrgId + " message: "
+                        + resp.getParams().getErr());
+                response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
+            }
+        } catch (JsonProcessingException e) {
+            log.error(FAILED_TO_CREATE_CB_PLAN_MSG + userOrgId, e);
+            response.getParams().setStatus(Constants.FAILED);
+            response.getParams().setErr(e.getMessage());
+            response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
+        }
     }
 
     public ApiResponse updateCbPlan(ApiRequest request, String userOrgId, String token, List<String> userRoles) {
@@ -200,7 +210,7 @@ public class CbPlanServiceImpl {
             Map<String, Object> existingCbPlan = cbPlanMapInfo.get(0);
             if (MapUtils.isEmpty(existingCbPlan)) {
                 response.getParams().setStatus(Constants.FAILED);
-                response.getParams().setErr("cbPlan is not found for id: " + cbPlanId);
+                response.getParams().setErr(CB_PLAN_NOT_FOUND_MSG + cbPlanId);
                 response.setResponseCode(HttpStatus.BAD_REQUEST);
                 return response;
             }
@@ -234,36 +244,8 @@ public class CbPlanServiceImpl {
                     return response;
                 }
             } else if (Constants.DRAFT.equalsIgnoreCase(existingPlanStatus)) {
-                List<String> validations = requestValidator.validateCbPlanCreateRequest(request, isCCA, userOrgId);
-                if (CollectionUtils.isNotEmpty(validations)) {
-                    response.getParams().setStatus(Constants.FAILED);
-                    response.getParams().setErr(mapper.writeValueAsString(validations));
-                    response.setResponseCode(HttpStatus.BAD_REQUEST);
-                    return response;
-                }
-                Map<String, Object> updatedRequest = prepareCbPlanForUpdate(updatedCbPlan, existingCbPlan, userId);
-                Map<String, Object> resp = cassandraOperation.updateRecord(Constants.KEYSPACE_SUNBIRD,
-                        Constants.TABLE_CB_PLAN_V2, updatedRequest, Map.of(Constants.PLAN_ID, cbPlanId));
-                if (resp.get(Constants.RESPONSE).equals(Constants.SUCCESS)) {
-                    List<String> contentIds =
-                            (List<String>) updatedRequest.get(Constants.CONTENT_LIST);
-                    if (CollectionUtils.isNotEmpty(contentIds)) {
-                        // For the content Retirement validation Impl
-                        List<String> existingContentIds =
-                                (List<String>) existingCbPlan.get(Constants.CONTENT_LIST);
-                        upsertCbPlanContentLookup(cbPlanId, getAddedContent(existingContentIds, contentIds));
-                        removeCbPlanInfoForUpdateOrDeleteCbPlan(cbPlanId, getDeletedContent(existingContentIds, contentIds));
-                    }
-
-                    Map<String, Object> sanitizedMap = sanitizeForElastic(updatedRequest);
-                    esUtilService.updateDocument(serverProperties.getCpPlanIndex(), Constants.INDEX_TYPE, cbPlanId,
-                            sanitizedMap, serverProperties.getElasticCbPlanJsonPath());
-                    response.getResult().put(Constants.STATUS, Constants.UPDATED);
-                } else {
-                    response.getParams().setStatus(Constants.FAILED);
-                    response.getParams().setErr("cbPlan is not found for id: " + cbPlanId);
-                    response.setResponseCode(HttpStatus.BAD_REQUEST);
-                }
+                handleUpdateOfDraftCbPlan(request, isCCA, userOrgId, updatedCbPlan, existingCbPlan, cbPlanId, userId,
+                        response);
             }
 
             return response;
@@ -276,6 +258,42 @@ public class CbPlanServiceImpl {
         }
 
         return response;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void handleUpdateOfDraftCbPlan(ApiRequest request, boolean isCCA, String userOrgId,
+            Map<String, Object> updatedCbPlan, Map<String, Object> existingCbPlan, String cbPlanId, String userId,
+            ApiResponse response) throws JsonProcessingException {
+        List<String> validations = requestValidator.validateCbPlanCreateRequest(request, isCCA, userOrgId);
+        if (CollectionUtils.isNotEmpty(validations)) {
+            response.getParams().setStatus(Constants.FAILED);
+            response.getParams().setErr(mapper.writeValueAsString(validations));
+            response.setResponseCode(HttpStatus.BAD_REQUEST);
+            return;
+        }
+        Map<String, Object> updatedRequest = prepareCbPlanForUpdate(updatedCbPlan, existingCbPlan, userId);
+        Map<String, Object> resp = cassandraOperation.updateRecord(Constants.KEYSPACE_SUNBIRD,
+                Constants.TABLE_CB_PLAN_V2, updatedRequest, Map.of(Constants.PLAN_ID, cbPlanId));
+        if (resp.get(Constants.RESPONSE).equals(Constants.SUCCESS)) {
+            List<String> contentIds =
+                    (List<String>) updatedRequest.get(Constants.CONTENT_LIST);
+            if (CollectionUtils.isNotEmpty(contentIds)) {
+                // For the content Retirement validation Impl
+                List<String> existingContentIds =
+                        (List<String>) existingCbPlan.get(Constants.CONTENT_LIST);
+                upsertCbPlanContentLookup(cbPlanId, getAddedContent(existingContentIds, contentIds));
+                removeCbPlanInfoForUpdateOrDeleteCbPlan(cbPlanId, getDeletedContent(existingContentIds, contentIds));
+            }
+
+            Map<String, Object> sanitizedMap = sanitizeForElastic(updatedRequest);
+            esUtilService.updateDocument(serverProperties.getCpPlanIndex(), Constants.INDEX_TYPE, cbPlanId,
+                    sanitizedMap, serverProperties.getElasticCbPlanJsonPath());
+            response.getResult().put(Constants.STATUS, Constants.UPDATED);
+        } else {
+            response.getParams().setStatus(Constants.FAILED);
+            response.getParams().setErr(CB_PLAN_NOT_FOUND_MSG + cbPlanId);
+            response.setResponseCode(HttpStatus.BAD_REQUEST);
+        }
     }
 
     public ApiResponse publishCbPlan(ApiRequest request, String userOrgId, String authUserToken,
@@ -321,27 +339,12 @@ public class CbPlanServiceImpl {
                 return response;
             }
 
-            List<Map<String, Object>> cbPlanMapInfo = cassandraOperation.getRecordsByProperties(
-                    Constants.KEYSPACE_SUNBIRD, Constants.TABLE_CB_PLAN_V2, Map.of(Constants.PLAN_ID, cbPlanId), null,
-                    null);
-            Map<String, Object> existingCbPlan = cbPlanMapInfo.get(0);
-            if (MapUtils.isEmpty(existingCbPlan)) {
-                response.getParams().setStatus(Constants.FAILED);
-                response.getParams().setErr("cbPlan is not found for id: " + cbPlanId);
-                response.setResponseCode(HttpStatus.BAD_REQUEST);
+            Map<String, Object> existingCbPlan = loadAndAuthorizePublishPlan(cbPlanId, userId, userRoles, isAdmin,
+                    response);
+            if (Constants.FAILED.equalsIgnoreCase(response.getParams().getStatus())) {
                 return response;
             }
 
-            if (!isAdmin){
-                if (!(userId.equals(existingCbPlan.get(Constants.CREATED_BY)) ||
-                        serverProperties.getCbPlanUpdatePublishAuthorizedRoles().stream().anyMatch(
-                                roles -> CollectionUtils.isNotEmpty(userRoles) && userRoles.contains(roles)))) {
-                    response.getParams().setStatus(Constants.FAILED);
-                    response.getParams().setErr("Not Authorized to update cbp Plan");
-                    response.setResponseCode(HttpStatus.BAD_REQUEST);
-                    return response;
-                }
-            }
             String rootOrgId = getRootOrgFromUser(userId, response);
             if (Constants.FAILED.equalsIgnoreCase(response.getParams().getStatus())) {
                 return response;
@@ -357,7 +360,7 @@ public class CbPlanServiceImpl {
             }
 
             String comment = (String) incomingRequest.get(Constants.COMMENT);
-            Map<String, Object> updatedRequest = new HashMap<String, Object>();
+            Map<String, Object> updatedRequest = new HashMap<>();
             updatedRequest.put(Constants.PUBLISHED_AT, Instant.now());
             updatedRequest.put(Constants.PUBLISHED_BY, userId);
             updatedRequest.put(Constants.UPDATED_AT, Instant.now());
@@ -367,27 +370,11 @@ public class CbPlanServiceImpl {
             Set<String> rootOrgIdsInCriteria = new HashSet<>();
             Set<String> existingRootOrgIdsInCriteria = new HashSet<>();
             String existingOrgScope = (String) existingCbPlan.get(Constants.ORG_SCOPE);
-            List<String> errors = new ArrayList<>();
-            if (Constants.LIVE.equalsIgnoreCase(existingPlanStatus)) {
-                // This will initialize the existing rootOrgIds in the Criteria from contextData
-                requestValidator.validateContextData(existingCbPlan, isCCA, userOrgId, existingRootOrgIdsInCriteria, isAdmin);
-                // Need to update live plan with draft data if any
-                // Need to update lookup table entries
-                updatedRequest.putAll(prepareCbPlanForRePublish(existingCbPlan, incomingRequest, userId));
-                if (updatedRequest.containsKey(Constants.CONTEXT_DATA_REQUEST)) {
-                    errors = requestValidator.validateContextData(updatedRequest, isCCA, userOrgId, rootOrgIdsInCriteria, isAdmin);
-                }
-            } else if (Constants.DRAFT.equalsIgnoreCase(existingPlanStatus)) {
-                // Need to update comment and then publish.
-                // Need to update lookup table entries
-                updatedRequest.put(Constants.STATUS, Constants.LIVE);
-                updatedRequest.put(Constants.END_DATE_REQUEST, parseEndDate(existingCbPlan.get(Constants.END_DATE_REQUEST)));
-                errors = requestValidator.validateContextData(existingCbPlan, isCCA, userOrgId, rootOrgIdsInCriteria, isAdmin);
-            } else {
-                response.getParams().setStatus(Constants.FAILED);
-                response.getParams().setErr(
-                        "CbPlan is in invalid state for ID: " + cbPlanId + " current status: " + existingPlanStatus);
-                response.setResponseCode(HttpStatus.BAD_REQUEST);
+
+            List<String> errors = prepareAndValidatePublishRequest(existingCbPlan, incomingRequest, updatedRequest,
+                    existingPlanStatus, isCCA, userOrgId, userId, isAdmin, rootOrgIdsInCriteria,
+                    existingRootOrgIdsInCriteria, cbPlanId, response);
+            if (Constants.FAILED.equalsIgnoreCase(response.getParams().getStatus())) {
                 return response;
             }
 
@@ -398,12 +385,8 @@ public class CbPlanServiceImpl {
                 return response;
             }
             // Set the orgScope again as we validate the contextData above
-            if (Constants.LIVE.equalsIgnoreCase(existingPlanStatus)) {
-                updatedRequest.remove(Constants.ROOT_ORG_IDS_IN_CONTEXT_DATA);
-                updatedRequest.put(Constants.DRAFT_DATA, mapper.writeValueAsString(Collections.emptyMap()));
-            } else if (Constants.DRAFT.equalsIgnoreCase(existingPlanStatus)) {
-                updatedRequest.put(Constants.ORG_SCOPE, existingCbPlan.get(Constants.ORG_SCOPE));
-            }
+            finalizeOrgScopeForPublish(updatedRequest, existingCbPlan, existingPlanStatus);
+
             Map<String, Object> sanitizedMap = sanitizeForElastic(updatedRequest);
             Map<String, Object> sanitizedExisting = sanitizeForElastic(existingCbPlan);
             Map<String, Object> resp = cassandraOperation.updateRecord(Constants.KEYSPACE_SUNBIRD,
@@ -417,68 +400,8 @@ public class CbPlanServiceImpl {
                             log.error("ES_CASSANDRA_DIVERGENCE: failed to roll back ES document for cbPlanId={} after Cassandra commit failure — manual reconciliation required", cbPlanId);
                         }
                     });
-            if (resp.get(Constants.RESPONSE).equals(Constants.SUCCESS)) {
-                if (Constants.SINGLE.equalsIgnoreCase((String) updatedRequest.get(Constants.ORG_SCOPE)) ||
-                        Constants.CUSTOM.equalsIgnoreCase((String) updatedRequest.get(Constants.ORG_SCOPE))) {
-                    ApiResponse lookupResp = upsertCustomOrgLookup(
-                            String.valueOf(cbPlanId),
-                            rootOrgIdsInCriteria,
-                            parseEndDate(updatedRequest.get(Constants.END_DATE_REQUEST)),
-                            true);
-                    if (!Constants.SUCCESS.equals(lookupResp.get(Constants.RESPONSE))) {
-                        response.getParams().setStatus(Constants.FAILED);
-                        response.getParams().setErr(lookupResp.getParams().getErr());
-                        response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
-                        return response;
-                    }
-                } else if (Constants.ALL.equalsIgnoreCase((String) updatedRequest.get(Constants.ORG_SCOPE))) {
-                    ApiResponse singleResp = upsertAllOrgLookup(String.valueOf(cbPlanId),
-                            parseEndDate(updatedRequest.get(Constants.END_DATE_REQUEST)),
-                            true);
-                    if (!Constants.SUCCESS.equals(singleResp.get(Constants.RESPONSE))) {
-                        response.getParams().setStatus(Constants.FAILED);
-                        response.getParams().setErr(singleResp.getParams().getErr());
-                        response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
-                        return response;
-                    }
-                }
-
-                Set<String> removed = new HashSet<>(existingRootOrgIdsInCriteria);
-                removed.removeAll(rootOrgIdsInCriteria);
-                if (CollectionUtils.isNotEmpty(removed)) {
-                    if (Constants.CUSTOM.equalsIgnoreCase(existingOrgScope) || 
-                            Constants.SINGLE.equalsIgnoreCase(existingOrgScope)) {
-                        ApiResponse removeResp = upsertCustomOrgLookup(String.valueOf(cbPlanId), removed, null, false);
-                        if (!Constants.SUCCESS.equals(removeResp.get(Constants.RESPONSE))) {
-                            response.getParams().setStatus(Constants.FAILED);
-                            response.getParams().setErr(removeResp.getParams().getErr());
-                            response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
-                            return response;
-                        }
-                    }
-                }
-                if (Constants.ALL.equalsIgnoreCase(existingOrgScope)) {
-                        // We had 'ALL' scope previously. So, let's check if anything is added.
-                        Set<String> newlyAdded = new HashSet<>(rootOrgIdsInCriteria);
-                        newlyAdded.removeAll(existingRootOrgIdsInCriteria);
-                        if (CollectionUtils.isNotEmpty(newlyAdded)) {
-                            //Yes, something is added. So, we need to remove the 'ALL' entry
-                            ApiResponse removeResp = upsertAllOrgLookup(String.valueOf(cbPlanId), null, false);
-                            if (!Constants.SUCCESS.equals(removeResp.get(Constants.RESPONSE))) {
-                                response.getParams().setStatus(Constants.FAILED);
-                                response.getParams().setErr(removeResp.getParams().getErr());
-                                response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
-                                return response;
-                            }
-                        }
-                    }
-            } else {
-                response.getParams().setStatus(Constants.FAILED);
-                response.getParams()
-                        .setErr((String) resp.get(Constants.ERROR_MESSAGE) + "for cbPlanId: " + cbPlanId);
-                response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
-            }
-
+            handlePublishLookupUpdates(resp, updatedRequest, existingOrgScope, rootOrgIdsInCriteria,
+                    existingRootOrgIdsInCriteria, cbPlanId, response);
         } catch (Exception e) {
             log.error("Failed to Publish CB Plan for OrgId: " + userOrgId, e);
             response.getParams().setStatus(Constants.FAILED);
@@ -488,33 +411,162 @@ public class CbPlanServiceImpl {
         return response;
     }
 
+    private Map<String, Object> loadAndAuthorizePublishPlan(String cbPlanId, String userId, List<String> userRoles,
+            boolean isAdmin, ApiResponse response) {
+        List<Map<String, Object>> cbPlanMapInfo = cassandraOperation.getRecordsByProperties(
+                Constants.KEYSPACE_SUNBIRD, Constants.TABLE_CB_PLAN_V2, Map.of(Constants.PLAN_ID, cbPlanId), null,
+                null);
+        Map<String, Object> existingCbPlan = cbPlanMapInfo.get(0);
+        if (MapUtils.isEmpty(existingCbPlan)) {
+            response.getParams().setStatus(Constants.FAILED);
+            response.getParams().setErr(CB_PLAN_NOT_FOUND_MSG + cbPlanId);
+            response.setResponseCode(HttpStatus.BAD_REQUEST);
+            return existingCbPlan;
+        }
+
+        if (!isAdmin && !(userId.equals(existingCbPlan.get(Constants.CREATED_BY)) ||
+                serverProperties.getCbPlanUpdatePublishAuthorizedRoles().stream().anyMatch(
+                        roles -> CollectionUtils.isNotEmpty(userRoles) && userRoles.contains(roles)))) {
+            response.getParams().setStatus(Constants.FAILED);
+            response.getParams().setErr("Not Authorized to update cbp Plan");
+            response.setResponseCode(HttpStatus.BAD_REQUEST);
+        }
+        return existingCbPlan;
+    }
+
+    private List<String> prepareAndValidatePublishRequest(Map<String, Object> existingCbPlan,
+            Map<String, Object> incomingRequest, Map<String, Object> updatedRequest, String existingPlanStatus,
+            boolean isCCA, String userOrgId, String userId, boolean isAdmin, Set<String> rootOrgIdsInCriteria,
+            Set<String> existingRootOrgIdsInCriteria, String cbPlanId, ApiResponse response)
+            throws JsonProcessingException {
+        List<String> errors = new ArrayList<>();
+        if (Constants.LIVE.equalsIgnoreCase(existingPlanStatus)) {
+            // This will initialize the existing rootOrgIds in the Criteria from contextData
+            requestValidator.validateContextData(existingCbPlan, isCCA, userOrgId, existingRootOrgIdsInCriteria, isAdmin);
+            // Need to update live plan with draft data if any
+            // Need to update lookup table entries
+            updatedRequest.putAll(prepareCbPlanForRePublish(existingCbPlan, incomingRequest, userId));
+            if (updatedRequest.containsKey(Constants.CONTEXT_DATA_REQUEST)) {
+                errors = requestValidator.validateContextData(updatedRequest, isCCA, userOrgId, rootOrgIdsInCriteria, isAdmin);
+            }
+        } else if (Constants.DRAFT.equalsIgnoreCase(existingPlanStatus)) {
+            // Need to update comment and then publish.
+            // Need to update lookup table entries
+            updatedRequest.put(Constants.STATUS, Constants.LIVE);
+            updatedRequest.put(Constants.END_DATE_REQUEST, parseEndDate(existingCbPlan.get(Constants.END_DATE_REQUEST)));
+            errors = requestValidator.validateContextData(existingCbPlan, isCCA, userOrgId, rootOrgIdsInCriteria, isAdmin);
+        } else {
+            response.getParams().setStatus(Constants.FAILED);
+            response.getParams().setErr(
+                    "CbPlan is in invalid state for ID: " + cbPlanId + " current status: " + existingPlanStatus);
+            response.setResponseCode(HttpStatus.BAD_REQUEST);
+        }
+        return errors;
+    }
+
+    private void finalizeOrgScopeForPublish(Map<String, Object> updatedRequest, Map<String, Object> existingCbPlan,
+            String existingPlanStatus) throws JsonProcessingException {
+        if (Constants.LIVE.equalsIgnoreCase(existingPlanStatus)) {
+            updatedRequest.remove(Constants.ROOT_ORG_IDS_IN_CONTEXT_DATA);
+            updatedRequest.put(Constants.DRAFT_DATA, mapper.writeValueAsString(Collections.emptyMap()));
+        } else if (Constants.DRAFT.equalsIgnoreCase(existingPlanStatus)) {
+            updatedRequest.put(Constants.ORG_SCOPE, existingCbPlan.get(Constants.ORG_SCOPE));
+        }
+    }
+
+    private void handlePublishLookupUpdates(Map<String, Object> resp, Map<String, Object> updatedRequest,
+            String existingOrgScope, Set<String> rootOrgIdsInCriteria, Set<String> existingRootOrgIdsInCriteria,
+            String cbPlanId, ApiResponse response) {
+        if (!resp.get(Constants.RESPONSE).equals(Constants.SUCCESS)) {
+            response.getParams().setStatus(Constants.FAILED);
+            response.getParams()
+                    .setErr((String) resp.get(Constants.ERROR_MESSAGE) + FOR_CB_PLAN_ID_MSG + cbPlanId);
+            response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
+            return;
+        }
+        if (Constants.SINGLE.equalsIgnoreCase((String) updatedRequest.get(Constants.ORG_SCOPE)) ||
+                Constants.CUSTOM.equalsIgnoreCase((String) updatedRequest.get(Constants.ORG_SCOPE))) {
+            ApiResponse lookupResp = upsertCustomOrgLookup(
+                    String.valueOf(cbPlanId),
+                    rootOrgIdsInCriteria,
+                    parseEndDate(updatedRequest.get(Constants.END_DATE_REQUEST)),
+                    true);
+            if (!Constants.SUCCESS.equals(lookupResp.get(Constants.RESPONSE))) {
+                response.getParams().setStatus(Constants.FAILED);
+                response.getParams().setErr(lookupResp.getParams().getErr());
+                response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
+                return;
+            }
+        } else if (Constants.ALL.equalsIgnoreCase((String) updatedRequest.get(Constants.ORG_SCOPE))) {
+            ApiResponse singleResp = upsertAllOrgLookup(String.valueOf(cbPlanId),
+                    parseEndDate(updatedRequest.get(Constants.END_DATE_REQUEST)),
+                    true);
+            if (!Constants.SUCCESS.equals(singleResp.get(Constants.RESPONSE))) {
+                response.getParams().setStatus(Constants.FAILED);
+                response.getParams().setErr(singleResp.getParams().getErr());
+                response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
+                return;
+            }
+        }
+
+        Set<String> removed = new HashSet<>(existingRootOrgIdsInCriteria);
+        removed.removeAll(rootOrgIdsInCriteria);
+        if (CollectionUtils.isNotEmpty(removed) && (Constants.CUSTOM.equalsIgnoreCase(existingOrgScope)
+                || Constants.SINGLE.equalsIgnoreCase(existingOrgScope))) {
+            ApiResponse removeResp = upsertCustomOrgLookup(String.valueOf(cbPlanId), removed, null, false);
+            if (!Constants.SUCCESS.equals(removeResp.get(Constants.RESPONSE))) {
+                response.getParams().setStatus(Constants.FAILED);
+                response.getParams().setErr(removeResp.getParams().getErr());
+                response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
+                return;
+            }
+        }
+        if (Constants.ALL.equalsIgnoreCase(existingOrgScope)) {
+            // We had 'ALL' scope previously. So, let's check if anything is added.
+            Set<String> newlyAdded = new HashSet<>(rootOrgIdsInCriteria);
+            newlyAdded.removeAll(existingRootOrgIdsInCriteria);
+            if (CollectionUtils.isNotEmpty(newlyAdded)) {
+                //Yes, something is added. So, we need to remove the 'ALL' entry
+                ApiResponse removeResp = upsertAllOrgLookup(String.valueOf(cbPlanId), null, false);
+                if (!Constants.SUCCESS.equals(removeResp.get(Constants.RESPONSE))) {
+                    response.getParams().setStatus(Constants.FAILED);
+                    response.getParams().setErr(removeResp.getParams().getErr());
+                    response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
+                }
+            }
+        }
+    }
+
     private Instant parseEndDate(Object endDateObj) {
         try {
-            if (endDateObj instanceof Date) {
-                return ((Date) endDateObj).toInstant();
+            if (endDateObj instanceof Date date) {
+                return date.toInstant();
             }
-            if (endDateObj instanceof Instant) {
-                return (Instant) endDateObj;
+            if (endDateObj instanceof Instant instant) {
+                return instant;
             }
-            if (endDateObj instanceof Long) {
-                return Instant.ofEpochMilli((Long) endDateObj);
+            if (endDateObj instanceof Long longValue) {
+                return Instant.ofEpochMilli(longValue);
             }
-            if (endDateObj instanceof String) {
-                String endDateStr = (String) endDateObj;
-                try {
-                    // Try ISO_INSTANT first (e.g. 2025-12-31T10:15:30Z)
-                    return Instant.parse(endDateStr);
-                } catch (DateTimeParseException e) {
-                    // Fallback: yyyy-MM-dd - parse as end of day in Asia/Kolkata
-                    LocalDate localDate = LocalDate.parse(endDateStr, DateTimeFormatter.ofPattern("yyyy-MM-dd"));
-                    ZoneId kolkata = ZoneId.of("Asia/Kolkata");
-                    return localDate.atTime(23, 59, 59).atZone(kolkata).toInstant();
-                }
+            if (endDateObj instanceof String endDateStr) {
+                return parseEndDateString(endDateStr);
             }
         } catch (Exception e) {
             throw new RuntimeException("Invalid endDate format: " + endDateObj, e);
         }
         return null;
+    }
+
+    private Instant parseEndDateString(String endDateStr) {
+        try {
+            // Try ISO_INSTANT first (e.g. 2025-12-31T10:15:30Z)
+            return Instant.parse(endDateStr);
+        } catch (DateTimeParseException e) {
+            // Fallback: yyyy-MM-dd - parse as end of day in Asia/Kolkata
+            LocalDate localDate = LocalDate.parse(endDateStr, DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+            ZoneId kolkata = ZoneId.of("Asia/Kolkata");
+            return localDate.atTime(23, 59, 59).atZone(kolkata).toInstant();
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -533,18 +585,9 @@ public class CbPlanServiceImpl {
             return orgIdSet; // nothing to extract
         }
 
-        Map<String, Object> contextData = new HashMap<>();
-        try {
-            if (contextDataObj instanceof String) {
-                ObjectMapper mapper = new ObjectMapper();
-                contextData = mapper.readValue((String) contextDataObj, Map.class);
-            } else if (contextDataObj instanceof Map) {
-                contextData = (Map<String, Object>) contextDataObj;
-            } else {
-                return orgIdSet; // invalid type
-            }
-        } catch (Exception e) {
-            return orgIdSet; // parsing failed
+        Map<String, Object> contextData = resolveContextDataForRootOrgExtraction(contextDataObj);
+        if (MapUtils.isEmpty(contextData)) {
+            return orgIdSet; // invalid type or parsing failed
         }
 
         Map<String, Object> accessControl = (Map<String, Object>) contextData.getOrDefault(Constants.ACCESS_CONTROL,
@@ -552,24 +595,48 @@ public class CbPlanServiceImpl {
         List<Map<String, Object>> userGroups = (List<Map<String, Object>>) accessControl
                 .getOrDefault(Constants.USER_GROUPS, new ArrayList<>());
 
+        collectRootOrgIdsFromUserGroups(userGroups, orgIdSet);
+
+        return orgIdSet;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> resolveContextDataForRootOrgExtraction(Object contextDataObj) {
+        try {
+            if (contextDataObj instanceof String contextDataStr) {
+                ObjectMapper localMapper = new ObjectMapper();
+                return localMapper.readValue(contextDataStr, Map.class);
+            } else if (contextDataObj instanceof Map) {
+                return (Map<String, Object>) contextDataObj;
+            }
+        } catch (Exception e) {
+            return Collections.emptyMap(); // parsing failed
+        }
+        return Collections.emptyMap(); // invalid type
+    }
+
+    @SuppressWarnings("unchecked")
+    private void collectRootOrgIdsFromUserGroups(List<Map<String, Object>> userGroups, Set<String> orgIdSet) {
         for (Map<String, Object> userGroup : userGroups) {
             List<Map<String, Object>> criteriaList = (List<Map<String, Object>>) userGroup
                     .get(Constants.USER_GROUP_CRITERIA_LIST);
             if (criteriaList != null && !criteriaList.isEmpty()) {
-                for (Map<String, Object> criteria : criteriaList) {
-                    String criteriaKey = (String) criteria.get(Constants.CRITERIA_KEY);
-                    if (Constants.ROOT_ORG_ID.equalsIgnoreCase(criteriaKey)
-                            || Constants.TARGETED_ORGANISATION.equalsIgnoreCase(criteriaKey)) {
-                        List<String> values = (List<String>) criteria.get(Constants.CRITERIA_VALUE);
-                        if (values != null && !values.isEmpty()) {
-                            orgIdSet.addAll(values);
-                        }
-                    }
+                collectRootOrgIdsFromCriteriaList(criteriaList, orgIdSet);
+            }
+        }
+    }
+
+    private void collectRootOrgIdsFromCriteriaList(List<Map<String, Object>> criteriaList, Set<String> orgIdSet) {
+        for (Map<String, Object> criteria : criteriaList) {
+            String criteriaKey = (String) criteria.get(Constants.CRITERIA_KEY);
+            if (Constants.ROOT_ORG_ID.equalsIgnoreCase(criteriaKey)
+                    || Constants.TARGETED_ORGANISATION.equalsIgnoreCase(criteriaKey)) {
+                List<String> values = (List<String>) criteria.get(Constants.CRITERIA_VALUE);
+                if (values != null && !values.isEmpty()) {
+                    orgIdSet.addAll(values);
                 }
             }
         }
-
-        return orgIdSet;
     }
 
     /**
@@ -584,34 +651,37 @@ public class CbPlanServiceImpl {
             return null;
 
         try {
-            if (endDateObj instanceof String) {
+            if (endDateObj instanceof String str) {
                 // ISO 8601 string, e.g., "2023-12-14T00:00:00Z"
-                String str = (String) endDateObj;
-                try {
-                    // Try full ISO-8601 datetime first
-                    return Date.from(Instant.parse(str));
-                } catch (DateTimeParseException e) {
-                    // Fallback for date-only strings "yyyy-MM-dd".
-                    // Business rule (updated): interpret the date using Asia/Kolkata zone and set
-                    // time to 23:59:59 in that zone.
-                    // Example: "2026-01-31" -> 2026-01-31T23:59:59+05:30 which is
-                    // 2026-01-31T18:29:59Z stored in Cassandra.
-                    LocalDate localDate = LocalDate.parse(str, DateTimeFormatter.ISO_LOCAL_DATE);
-                    ZoneId kolkata = ZoneId.of("Asia/Kolkata");
-                    return Date.from(localDate.atTime(23, 59, 59).atZone(kolkata).toInstant());
-                }
-            } else if (endDateObj instanceof Instant) {
-                return Date.from((Instant) endDateObj);
-            } else if (endDateObj instanceof java.sql.Timestamp) {
-                return new Date(((java.sql.Timestamp) endDateObj).getTime());
-            } else if (endDateObj instanceof java.util.Date) {
-                return new Date(((java.util.Date) endDateObj).getTime());
+                return parseDateString(str);
+            } else if (endDateObj instanceof Instant instant) {
+                return Date.from(instant);
+            } else if (endDateObj instanceof java.sql.Timestamp timestamp) {
+                return new Date(timestamp.getTime());
+            } else if (endDateObj instanceof Date date) {
+                return new Date(date.getTime());
             }
         } catch (Exception e) {
             log.error("Error parsing endDate: {}", endDateObj, e);
         }
 
         return null;
+    }
+
+    private Date parseDateString(String str) {
+        try {
+            // Try full ISO-8601 datetime first
+            return Date.from(Instant.parse(str));
+        } catch (DateTimeParseException e) {
+            // Fallback for date-only strings "yyyy-MM-dd".
+            // Business rule (updated): interpret the date using Asia/Kolkata zone and set
+            // time to 23:59:59 in that zone.
+            // Example: "2026-01-31" -> 2026-01-31T23:59:59+05:30 which is
+            // 2026-01-31T18:29:59Z stored in Cassandra.
+            LocalDate localDate = LocalDate.parse(str, DateTimeFormatter.ISO_LOCAL_DATE);
+            ZoneId kolkata = ZoneId.of("Asia/Kolkata");
+            return Date.from(localDate.atTime(23, 59, 59).atZone(kolkata).toInstant());
+        }
     }
 
     public ApiResponse readCbPlan(String cbPlanId, String userOrgId, String authUserToken) {
@@ -650,14 +720,14 @@ public class CbPlanServiceImpl {
 
     private Map<String, Object> populateReadData(Map<String, Object> cbPlan) throws Exception {
         Map<String, Object> enrichData = new HashMap<>();
-        List<String> contentTypeInfo = new ArrayList<>();
-        if ((StringUtils.isNotBlank((String) cbPlan.get(Constants.DRAFT_DATA)) && !((String)cbPlan.get(Constants.DRAFT_DATA)).equals("{}")) 
+        List<String> contentTypeInfo;
+        if ((StringUtils.isNotBlank((String) cbPlan.get(Constants.DRAFT_DATA)) && !((String)cbPlan.get(Constants.DRAFT_DATA)).equals("{}"))
                         && Constants.LIVE.equalsIgnoreCase((String) cbPlan.get(Constants.STATUS))) {
             CbPlanDto cbPlanDto = mapper.readValue((String) cbPlan.get(Constants.DRAFT_DATA), CbPlanDto.class);
             enrichData.put(Constants.NAME, cbPlanDto.getName());
             contentTypeInfo = cbPlanDto.getContentList();
             enrichData.put(Constants.END_DATE_REQUEST, cbPlanDto.getEndDate());
-            enrichData.put(Constants.IS_APAR, cbPlanDto.getIsApar() != null ? cbPlanDto.getIsApar() : false);
+            enrichData.put(Constants.IS_APAR, cbPlanDto.getIsApar() != null && cbPlanDto.getIsApar());
         } else {
             enrichData.put(Constants.NAME, cbPlan.get(Constants.NAME));
             contentTypeInfo = (List<String>) cbPlan.get(Constants.CONTENT_LIST);
@@ -707,10 +777,6 @@ public class CbPlanServiceImpl {
             }
             SearchResult searchResult = esUtilService.searchDocuments(serverProperties.getCpPlanIndex(),
                     searchCriteria, serverProperties.getElasticCbPlanJsonPath());
-            List<Map<String, Object>> cbPlans = mapper.convertValue(
-                    searchResult.getData(),
-                    new TypeReference<List<Map<String, Object>>>() {
-                    });
             if (!searchResult.getData().isEmpty()) {
                 List<Map<String, Object>> dataNode = searchResult.getData();
 
@@ -718,38 +784,7 @@ public class CbPlanServiceImpl {
                     List<Map<String, Object>> enrichedData = new ArrayList<>();
 
                     for (Map<String, Object> item : dataNode) {
-                        // Create a copy of item so we don’t mutate original
-                        Map<String, Object> enrichedItem = new HashMap<>(item);
-                        String createdBy = (String) enrichedItem.get(Constants.CREATED_BY);
-
-                        if (item.containsKey(Constants.CREATED_BY) && item.get(Constants.CREATED_BY) != null) {
-                            Object createdByObj = item.get(Constants.CREATED_BY);
-                            Map<String, Object> userInfoMap = new HashMap<>();
-                            if (createdByObj instanceof String && !((String) createdByObj).trim().isEmpty()) {
-                                // fetch user details from DB
-                                userInfoMap = userAndOrgService.readUserProfile(
-                                        (String) item.get(Constants.CREATED_BY),
-                                        Arrays.asList(Constants.FIRSTNAME, Constants.USER_ID)
-                                );
-                                if (userInfoMap != null) {
-
-                                    enrichedItem.put(Constants.CREATED_BY_NAME,
-                                            userInfoMap.get(Constants.FIRSTNAME));
-                                    enrichedItem.put(Constants.CREATED_BY, item.get(Constants.CREATED_BY));
-                                }
-                            }
-                        }
-
-                        if (item.containsKey(Constants.CONTENT_LIST) && item.get(Constants.CONTENT_LIST) != null) {
-                            Object contentListObj = item.get(Constants.CONTENT_LIST);
-
-                            if (contentListObj instanceof List) {
-                                enrichedItem.put(Constants.CONTENT_LIST,
-                                        contentService.enrichContentInfoForCBPlan((List<String>) contentListObj));
-                            }
-                        }
-
-                        enrichedData.add(enrichedItem);
+                        enrichedData.add(enrichSearchResultItem(item));
                     }
 
                     // 🔑 Replace original data with enrichedData
@@ -769,6 +804,41 @@ public class CbPlanServiceImpl {
         return response;
     }
 
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> enrichSearchResultItem(Map<String, Object> item) {
+        // Create a copy of item so we don’t mutate original
+        Map<String, Object> enrichedItem = new HashMap<>(item);
+
+        if (item.containsKey(Constants.CREATED_BY) && item.get(Constants.CREATED_BY) != null) {
+            enrichCreatedByInfo(item, enrichedItem);
+        }
+
+        if (item.containsKey(Constants.CONTENT_LIST) && item.get(Constants.CONTENT_LIST) != null) {
+            Object contentListObj = item.get(Constants.CONTENT_LIST);
+
+            if (contentListObj instanceof List) {
+                enrichedItem.put(Constants.CONTENT_LIST,
+                        contentService.enrichContentInfoForCBPlan((List<String>) contentListObj));
+            }
+        }
+
+        return enrichedItem;
+    }
+
+    private void enrichCreatedByInfo(Map<String, Object> item, Map<String, Object> enrichedItem) {
+        Object createdByObj = item.get(Constants.CREATED_BY);
+        if (createdByObj instanceof String str && !str.trim().isEmpty()) {
+            // fetch user details from DB
+            Map<String, Object> userInfoMap = userAndOrgService.readUserProfile(
+                    (String) item.get(Constants.CREATED_BY),
+                    Arrays.asList(Constants.FIRSTNAME, Constants.USER_ID)
+            );
+            if (userInfoMap != null) {
+                enrichedItem.put(Constants.CREATED_BY_NAME, userInfoMap.get(Constants.FIRSTNAME));
+                enrichedItem.put(Constants.CREATED_BY, item.get(Constants.CREATED_BY));
+            }
+        }
+    }
 
     private void createSuccessResponse(ApiResponse response) {
         response.setParams(new ApiRespParam());
@@ -801,74 +871,7 @@ public class CbPlanServiceImpl {
                     Constants.KEYSPACE_SUNBIRD, Constants.TABLE_CB_PLAN_V2, cbPlanInfo, null, null);
 
             if (CollectionUtils.isNotEmpty(cbPlanMap)) {
-                Map<String, Object> cbPlan = cbPlanMap.get(0);
-                if (!(userId.equals(cbPlan.get(Constants.CREATED_BY)) ||
-                        serverProperties.getCbPlanUpdatePublishAuthorizedRoles().stream().anyMatch(
-                                roles -> CollectionUtils.isNotEmpty(userRoles) && userRoles.contains(roles)))) {
-                    response.getParams().setStatus(Constants.FAILED);
-                    response.getParams().setErr("Not Authorized to delete cbp Plan");
-                    response.setResponseCode(HttpStatus.BAD_REQUEST);
-                    return response;
-                }
-                if (Constants.CB_RETIRE.equalsIgnoreCase((String) cbPlan.get(Constants.STATUS))) {
-                    response.getParams().setStatus(Constants.FAILED);
-                    response.getParams().setErr("CbPlan is already archived for ID: " + cbPlanId);
-                    response.setResponseCode(HttpStatus.BAD_REQUEST);
-                    return response;
-                }
-
-                cbPlan.put(Constants.UPDATED_AT, Instant.now());
-                cbPlan.put(Constants.UPDATED_BY, userId);
-                cbPlan.put(Constants.STATUS, Constants.CB_RETIRE);
-                if (StringUtils.isNoneBlank(comment)) {
-                    cbPlan.put(Constants.COMMENT, comment);
-                }
-                cbPlan.remove(Constants.PLAN_ID);
-                cbPlan.put(Constants.CB_PUBLISHED_AT, Instant.now());
-                Map<String, Object> resp = cassandraOperation.updateRecord(Constants.KEYSPACE_SUNBIRD,
-                        Constants.TABLE_CB_PLAN_V2, cbPlan, cbPlanInfo);
-                if (resp.get(Constants.RESPONSE).equals(Constants.SUCCESS)) {
-                    cbPlan.put(Constants.ID, cbPlanId);
-                    cbPlan.put(Constants.STATUS, Constants.CB_RETIRE);
-                    List<String> contentIds =
-                            (List<String>) cbPlan.get(Constants.CONTENT_LIST);
-                    if (CollectionUtils.isNotEmpty(contentIds)) {
-                        removeCbPlanInfoForUpdateOrDeleteCbPlan(cbPlanId, contentIds);
-                    }
-                    Map<String, Object> sanitizedMap = sanitizeForElastic(cbPlan);
-                    // TO DO : need to use upsert method instead of addDocument
-                    esUtilService.addDocument(serverProperties.getCpPlanIndex(), Constants.INDEX_TYPE,
-                            cbPlanId, sanitizedMap, serverProperties.getElasticCbPlanJsonPath());
-                    Set<String> existingRootOrgIdsInCriteria = extractUniqueRootOrgIds(cbPlan);
-                    String orgScope = (String) cbPlan.get(Constants.ORG_SCOPE);
-                    
-                    if (Constants.SINGLE.equalsIgnoreCase(orgScope)
-                            || Constants.CUSTOM.equalsIgnoreCase(orgScope)) {
-                        ApiResponse lookupResp = upsertCustomOrgLookup(cbPlanId, existingRootOrgIdsInCriteria, null, false);
-                        if (!Constants.SUCCESS.equals(lookupResp.get(Constants.RESPONSE))) {
-                            response.getParams().setStatus(Constants.FAILED);
-                            response.getParams().setErr(lookupResp.getParams().getErr());
-                            response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
-                            return response;
-                        }
-                    }
-                    if (Constants.ALL.equalsIgnoreCase(orgScope)) {
-                        ApiResponse lookupResp = upsertAllOrgLookup(cbPlanId, null, false);
-                        if (!Constants.SUCCESS.equals(lookupResp.get(Constants.RESPONSE))) {
-                            response.getParams().setStatus(Constants.FAILED);
-                            response.getParams().setErr((String) lookupResp.get(Constants.ERROR_MESSAGE));
-                            response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
-                            return response;
-                        }
-                    }
-                    response.getResult().put(Constants.STATUS, Constants.UPDATED);
-                    response.getResult().put(Constants.MESSAGE, "Archived cbPlan for cbPlanId: " + cbPlanId);
-                } else {
-                    response.getParams().setStatus(Constants.FAILED);
-                    response.getParams()
-                            .setErr((String) resp.get(Constants.ERROR_MESSAGE) + "for cbPlanId: " + cbPlanId);
-                    response.setResponseCode(HttpStatus.BAD_REQUEST);
-                }
+                retireExistingCbPlan(cbPlanMap.get(0), cbPlanInfo, cbPlanId, userId, comment, userRoles, response);
             } else {
                 response.getParams().setStatus(Constants.FAILED);
                 response.getParams().setErr("CbPlan is not exist for ID: " + cbPlanId);
@@ -881,6 +884,82 @@ public class CbPlanServiceImpl {
             response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
         }
         return response;
+    }
+
+    private void retireExistingCbPlan(Map<String, Object> cbPlan, Map<String, Object> cbPlanInfo, String cbPlanId,
+            String userId, String comment, List<String> userRoles, ApiResponse response) {
+        if (!(userId.equals(cbPlan.get(Constants.CREATED_BY)) ||
+                serverProperties.getCbPlanUpdatePublishAuthorizedRoles().stream().anyMatch(
+                        roles -> CollectionUtils.isNotEmpty(userRoles) && userRoles.contains(roles)))) {
+            response.getParams().setStatus(Constants.FAILED);
+            response.getParams().setErr("Not Authorized to delete cbp Plan");
+            response.setResponseCode(HttpStatus.BAD_REQUEST);
+            return;
+        }
+        if (Constants.CB_RETIRE.equalsIgnoreCase((String) cbPlan.get(Constants.STATUS))) {
+            response.getParams().setStatus(Constants.FAILED);
+            response.getParams().setErr("CbPlan is already archived for ID: " + cbPlanId);
+            response.setResponseCode(HttpStatus.BAD_REQUEST);
+            return;
+        }
+
+        cbPlan.put(Constants.UPDATED_AT, Instant.now());
+        cbPlan.put(Constants.UPDATED_BY, userId);
+        cbPlan.put(Constants.STATUS, Constants.CB_RETIRE);
+        if (StringUtils.isNoneBlank(comment)) {
+            cbPlan.put(Constants.COMMENT, comment);
+        }
+        cbPlan.remove(Constants.PLAN_ID);
+        cbPlan.put(Constants.CB_PUBLISHED_AT, Instant.now());
+        Map<String, Object> resp = cassandraOperation.updateRecord(Constants.KEYSPACE_SUNBIRD,
+                Constants.TABLE_CB_PLAN_V2, cbPlan, cbPlanInfo);
+        if (!resp.get(Constants.RESPONSE).equals(Constants.SUCCESS)) {
+            response.getParams().setStatus(Constants.FAILED);
+            response.getParams()
+                    .setErr((String) resp.get(Constants.ERROR_MESSAGE) + FOR_CB_PLAN_ID_MSG + cbPlanId);
+            response.setResponseCode(HttpStatus.BAD_REQUEST);
+            return;
+        }
+        finalizeRetiredCbPlan(cbPlan, cbPlanId, response);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void finalizeRetiredCbPlan(Map<String, Object> cbPlan, String cbPlanId, ApiResponse response) {
+        cbPlan.put(Constants.ID, cbPlanId);
+        cbPlan.put(Constants.STATUS, Constants.CB_RETIRE);
+        List<String> contentIds =
+                (List<String>) cbPlan.get(Constants.CONTENT_LIST);
+        if (CollectionUtils.isNotEmpty(contentIds)) {
+            removeCbPlanInfoForUpdateOrDeleteCbPlan(cbPlanId, contentIds);
+        }
+        Map<String, Object> sanitizedMap = sanitizeForElastic(cbPlan);
+        // TO DO : need to use upsert method instead of addDocument
+        esUtilService.addDocument(serverProperties.getCpPlanIndex(), Constants.INDEX_TYPE,
+                cbPlanId, sanitizedMap, serverProperties.getElasticCbPlanJsonPath());
+        Set<String> existingRootOrgIdsInCriteria = extractUniqueRootOrgIds(cbPlan);
+        String orgScope = (String) cbPlan.get(Constants.ORG_SCOPE);
+
+        if (Constants.SINGLE.equalsIgnoreCase(orgScope)
+                || Constants.CUSTOM.equalsIgnoreCase(orgScope)) {
+            ApiResponse lookupResp = upsertCustomOrgLookup(cbPlanId, existingRootOrgIdsInCriteria, null, false);
+            if (!Constants.SUCCESS.equals(lookupResp.get(Constants.RESPONSE))) {
+                response.getParams().setStatus(Constants.FAILED);
+                response.getParams().setErr(lookupResp.getParams().getErr());
+                response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
+                return;
+            }
+        }
+        if (Constants.ALL.equalsIgnoreCase(orgScope)) {
+            ApiResponse lookupResp = upsertAllOrgLookup(cbPlanId, null, false);
+            if (!Constants.SUCCESS.equals(lookupResp.get(Constants.RESPONSE))) {
+                response.getParams().setStatus(Constants.FAILED);
+                response.getParams().setErr((String) lookupResp.get(Constants.ERROR_MESSAGE));
+                response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
+                return;
+            }
+        }
+        response.getResult().put(Constants.STATUS, Constants.UPDATED);
+        response.getResult().put(Constants.MESSAGE, "Archived cbPlan for cbPlanId: " + cbPlanId);
     }
 
     private ApiResponse archiveCustomOrgLookup(String cbPlanId, List<String> orgIdList) {
@@ -1024,9 +1103,9 @@ public class CbPlanServiceImpl {
         Map<String, Object> sanitized = new HashMap<>();
         for (Map.Entry<String, Object> entry : input.entrySet()) {
             Object value = entry.getValue();
-            if (value instanceof Instant) {
+            if (value instanceof Instant instant) {
                 // Convert Instant → ISO String (e.g., 2025-09-02T09:30:56.446Z)
-                sanitized.put(entry.getKey(), DateTimeFormatter.ISO_INSTANT.format((Instant) value));
+                sanitized.put(entry.getKey(), DateTimeFormatter.ISO_INSTANT.format(instant));
             } else {
                 sanitized.put(entry.getKey(), value);
             }
@@ -1047,7 +1126,7 @@ public class CbPlanServiceImpl {
             List<Map<String, Object>> lookupMaps = new ArrayList<>();
             for (String orgId : orgIdList) {
                 Map<String, Object> lookupMap = new HashMap<>();
-                lookupMap.put("planid", cbPlanId);
+                lookupMap.put(PLAN_ID_COLUMN, cbPlanId);
                 lookupMap.put("orgid", orgId);
                 if (endDate != null) {
                     lookupMap.put("enddate", endDate);
@@ -1154,32 +1233,9 @@ public class CbPlanServiceImpl {
             List<String> allowedFields = serverProperties.getCbPlanUpdateAllowedFields();
 
             Map<String, Object> updatedCbPlan = new HashMap<>();
-            for (String field : allowedFields) {
-                if (incomingCbPlanRequest.containsKey(field)) {
-                    if (Constants.IS_APAR.equalsIgnoreCase(field)) {
-                        boolean existingIsApar = existingCbPlan.get(Constants.IS_APAR) != null
-                                && (Boolean) existingCbPlan.get(Constants.IS_APAR);
-                        if (existingIsApar) {
-                            // If existing is true, we cannot allow update to false
-                            if (incomingCbPlanRequest.get(field) != null
-                                    && !(Boolean) incomingCbPlanRequest.get(field)) {
-                                response.getParams().setStatus(Constants.FAILED);
-                                response.getParams().setErr("Cannot change isApar from true to false.");
-                                response.setResponseCode(HttpStatus.BAD_REQUEST);
-                                return;
-                            }
-                        }
-                    }
-                    Object value = incomingCbPlanRequest.get(field);
-                    if (value != null) {
-                        updatedCbPlan.put(field, value);
-                    } else {
-                        response.getParams().setStatus(Constants.FAILED);
-                        response.getParams().setErr("Field '" + field + "' cannot be null.");
-                        response.setResponseCode(HttpStatus.BAD_REQUEST);
-                        return;
-                    }
-                }
+            if (!populateUpdatedCbPlanFields(allowedFields, incomingCbPlanRequest, existingCbPlan, updatedCbPlan,
+                    response)) {
+                return;
             }
 
             updatedCbPlan.put(Constants.UPDATED_AT, Instant.now());
@@ -1200,7 +1256,7 @@ public class CbPlanServiceImpl {
             } else {
                 response.getParams().setStatus(Constants.FAILED);
                 response.getParams()
-                        .setErr((String) resp.get(Constants.ERROR_MESSAGE) + "for cbPlanId: "
+                        .setErr((String) resp.get(Constants.ERROR_MESSAGE) + FOR_CB_PLAN_ID_MSG
                                 + existingCbPlan.get(Constants.PLAN_ID));
                 response.setResponseCode(HttpStatus.BAD_REQUEST);
             }
@@ -1210,6 +1266,36 @@ public class CbPlanServiceImpl {
             response.getParams().setErr("Error processing existing CB Plan data");
             response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
         }
+    }
+
+    private boolean populateUpdatedCbPlanFields(List<String> allowedFields, Map<String, Object> incomingCbPlanRequest,
+            Map<String, Object> existingCbPlan, Map<String, Object> updatedCbPlan, ApiResponse response) {
+        for (String field : allowedFields) {
+            if (!incomingCbPlanRequest.containsKey(field)) {
+                continue;
+            }
+            if (Constants.IS_APAR.equalsIgnoreCase(field)) {
+                boolean existingIsApar = existingCbPlan.get(Constants.IS_APAR) != null
+                        && (Boolean) existingCbPlan.get(Constants.IS_APAR);
+                // If existing is true, we cannot allow update to false
+                if (existingIsApar && incomingCbPlanRequest.get(field) != null
+                        && !(Boolean) incomingCbPlanRequest.get(field)) {
+                    response.getParams().setStatus(Constants.FAILED);
+                    response.getParams().setErr("Cannot change isApar from true to false.");
+                    response.setResponseCode(HttpStatus.BAD_REQUEST);
+                    return false;
+                }
+            }
+            Object value = incomingCbPlanRequest.get(field);
+            if (value == null) {
+                response.getParams().setStatus(Constants.FAILED);
+                response.getParams().setErr("Field '" + field + "' cannot be null.");
+                response.setResponseCode(HttpStatus.BAD_REQUEST);
+                return false;
+            }
+            updatedCbPlan.put(field, value);
+        }
+        return true;
     }
 
     private void upsertCbPlanContentLookup(String planId, List<String> contentIds) {
@@ -1226,7 +1312,7 @@ public class CbPlanServiceImpl {
                             Constants.KEYSPACE_SUNBIRD,
                             Constants.TABLE_CB_PLAN_V2_CONTENT_LOOKUP,
                             where,
-                            Arrays.asList("planid"),
+                            Arrays.asList(PLAN_ID_COLUMN),
                             1
                     );
 
@@ -1241,7 +1327,7 @@ public class CbPlanServiceImpl {
                 planIds.add(planId);
 
                 Map<String, Object> update = new HashMap<>();
-                update.put("planid", planIds);
+                update.put(PLAN_ID_COLUMN, planIds);
 
                 cassandraOperation.updateRecord(
                         Constants.KEYSPACE_SUNBIRD,
@@ -1254,69 +1340,72 @@ public class CbPlanServiceImpl {
     }
 
     private void removeCbPlanInfoForUpdateOrDeleteCbPlan(String cbPlanId, List<String> contentIds) {
-
         for (String contentId : contentIds) {
+            processContentLookupRemoval(cbPlanId, contentId);
+        }
+    }
 
-            Map<String, Object> where = new HashMap<>();
-            where.put("contentid", contentId);
+    @SuppressWarnings("unchecked")
+    private void processContentLookupRemoval(String cbPlanId, String contentId) {
+        Map<String, Object> where = new HashMap<>();
+        where.put("contentid", contentId);
 
-            List<Map<String, Object>> rows =
-                    cassandraOperation.getRecordsByProperties(
-                            Constants.KEYSPACE_SUNBIRD,
-                            Constants.TABLE_CB_PLAN_V2_CONTENT_LOOKUP,
-                            where,
-                            Arrays.asList("planid"),
-                            1
-                    );
-
-            if (CollectionUtils.isEmpty(rows)) {
-                log.debug("No row found for contentId {}", contentId);
-                continue; // Skip processing if no rows found
-            }
-
-            Object existing = rows.get(0).get("planId");
-            if (!(existing instanceof Set)) {
-                log.warn("Invalid planid data for contentId {}", contentId);
-                continue; // Skip processing if data type is invalid
-            }
-
-            Set<String> planIds = new HashSet<>((Set<String>) existing);
-
-            // Case 1: only one planId and it matches → DELETE row
-            if (planIds.size() == 1 && planIds.contains(cbPlanId)) {
-
-                cassandraOperation.deleteRecord(
+        List<Map<String, Object>> rows =
+                cassandraOperation.getRecordsByProperties(
                         Constants.KEYSPACE_SUNBIRD,
                         Constants.TABLE_CB_PLAN_V2_CONTENT_LOOKUP,
-                        where
+                        where,
+                        Arrays.asList(PLAN_ID_COLUMN),
+                        1
                 );
 
-                log.info(
-                        "Deleted row for contentId {} (only cbPlanId {} existed)",
-                        contentId, cbPlanId
-                );
-            }
+        if (CollectionUtils.isEmpty(rows)) {
+            log.debug("No row found for contentId {}", contentId);
+            return; // Skip processing if no rows found
+        }
 
-            // Case 2: multiple planIds and contains cbPlanId → REMOVE & UPDATE
-            if (planIds.size() > 1 && planIds.contains(cbPlanId)) {
+        Object existing = rows.get(0).get("planId");
+        if (!(existing instanceof Set)) {
+            log.warn("Invalid planid data for contentId {}", contentId);
+            return; // Skip processing if data type is invalid
+        }
 
-                planIds.remove(cbPlanId);
+        Set<String> planIds = new HashSet<>((Set<String>) existing);
 
-                Map<String, Object> update = new HashMap<>();
-                update.put("planid", planIds);
+        // Case 1: only one planId and it matches → DELETE row
+        if (planIds.size() == 1 && planIds.contains(cbPlanId)) {
 
-                cassandraOperation.updateRecord(
-                        Constants.KEYSPACE_SUNBIRD,
-                        Constants.TABLE_CB_PLAN_V2_CONTENT_LOOKUP,
-                        update,
-                        where
-                );
+            cassandraOperation.deleteRecord(
+                    Constants.KEYSPACE_SUNBIRD,
+                    Constants.TABLE_CB_PLAN_V2_CONTENT_LOOKUP,
+                    where
+            );
 
-                log.info(
-                        "Removed cbPlanId {} from contentId {}. Remaining plans={}",
-                        cbPlanId, contentId, planIds
-                );
-            }
+            log.info(
+                    "Deleted row for contentId {} (only cbPlanId {} existed)",
+                    contentId, cbPlanId
+            );
+        }
+
+        // Case 2: multiple planIds and contains cbPlanId → REMOVE & UPDATE
+        if (planIds.size() > 1 && planIds.contains(cbPlanId)) {
+
+            planIds.remove(cbPlanId);
+
+            Map<String, Object> update = new HashMap<>();
+            update.put(PLAN_ID_COLUMN, planIds);
+
+            cassandraOperation.updateRecord(
+                    Constants.KEYSPACE_SUNBIRD,
+                    Constants.TABLE_CB_PLAN_V2_CONTENT_LOOKUP,
+                    update,
+                    where
+            );
+
+            log.info(
+                    "Removed cbPlanId {} from contentId {}. Remaining plans={}",
+                    cbPlanId, contentId, planIds
+            );
         }
     }
 

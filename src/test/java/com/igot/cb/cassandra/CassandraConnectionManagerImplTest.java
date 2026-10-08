@@ -13,7 +13,6 @@ import com.igot.cb.util.PropertiesCache;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
@@ -129,26 +128,12 @@ class CassandraConnectionManagerImplTest {
     }
 
     @Test
-    void testGetSession_existingSession() throws Exception {
+    void testGetSession_existingSession() {
         try (MockedStatic<PropertiesCache> staticMock = mockStatic(PropertiesCache.class)) {
             staticMock.when(PropertiesCache::getInstance).thenReturn(propertiesCache);
             when(propertiesCache.getProperty(Constants.CASSANDRA_CONFIG_HOST)).thenReturn("");
-            
-            assertThrows(CustomException.class, () -> {
-                CassandraConnectionManagerImpl manager = new CassandraConnectionManagerImpl();
-                
-                CqlSession mockSession = mock(CqlSession.class);
-                when(mockSession.isClosed()).thenReturn(false);
-                
-                // Use reflection to access the private static field
-                Field sessionMapField = CassandraConnectionManagerImpl.class.getDeclaredField("cassandraSessionMap");
-                sessionMapField.setAccessible(true);
-                Map<String, CqlSession> sessionMap = (Map<String, CqlSession>) sessionMapField.get(null);
-                sessionMap.put("testKeyspace", mockSession);
-                
-                CqlSession result = manager.getSession("testKeyspace");
-                assertEquals(mockSession, result);
-            });
+
+            assertThrows(CustomException.class, CassandraConnectionManagerImpl::new);
         }
     }
 
@@ -163,10 +148,8 @@ class CassandraConnectionManagerImplTest {
             when(propertiesCache.getProperty(Constants.HEARTBEAT_INTERVAL)).thenReturn("30000");
             when(propertiesCache.readProperty(Constants.SUNBIRD_CASSANDRA_CONSISTENCY_LEVEL)).thenReturn("LOCAL_QUORUM");
             
-            assertThrows(CustomException.class, () -> {
-                CassandraConnectionManagerImpl manager = new CassandraConnectionManagerImpl();
-                manager.getSession("testKeyspace");
-            });
+            CassandraConnectionManagerImpl manager = new CassandraConnectionManagerImpl();
+            assertThrows(CustomException.class, () -> manager.getSession("testKeyspace"));
         }
     }
 

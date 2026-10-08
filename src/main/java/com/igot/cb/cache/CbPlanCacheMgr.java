@@ -72,7 +72,7 @@ public class CbPlanCacheMgr {
                 allCbPlanList = new ArrayList<>();
             }
             allCbPlanList = allCbPlanList.stream()
-                    .filter(plan -> Boolean.TRUE.equals(plan.get(Constants.IS_ACTIVE))).collect(Collectors.toList());
+                    .filter(plan -> Boolean.TRUE.equals(plan.get(Constants.IS_ACTIVE))).toList();
             cbPlanCache.put(redisCacheKey, allCbPlanList);
         } else {
             log.info("Cache hit for all orgs: Found {} records", allCbPlanList.size());
@@ -122,15 +122,9 @@ public class CbPlanCacheMgr {
             cbPlanCache.put(orgId, cbPlanList);
             return cbPlanList;
         }
-        cbPlanList  = cbPlanList.stream()
-                .filter(m -> m.get(Constants.END_DATE_REQUEST) != null)
-                .sorted(Comparator.comparing(
-                        m -> (Instant) m.get(Constants.END_DATE_REQUEST),
-                        Comparator.reverseOrder()
-                ))
-                .collect(Collectors.toList());
+        cbPlanList = sortCbPlansByEndDateDesc(cbPlanList);
         List<String> planIds = cbPlanList.stream()
-                    .map(plan -> (String) plan.get(Constants.PLAN_ID)).collect(Collectors.toList());
+                    .map(plan -> (String) plan.get(Constants.PLAN_ID)).toList();
         Map<String, Object> propertiesMap = new HashMap<>();
         propertiesMap.put(Constants.PLAN_ID, planIds);
         List<Map<String, Object>> existingCbPlans = cassandraOperation.getRecordsByProperties(
@@ -145,19 +139,32 @@ public class CbPlanCacheMgr {
         }
 
         activeCbPlans = existingCbPlans.stream()
-                .filter(plan -> Constants.LIVE.equalsIgnoreCase((String) plan.get(Constants.STATUS))).collect(Collectors.toList());
-        // Prime the planIdCache
+                .filter(plan -> Constants.LIVE.equalsIgnoreCase((String) plan.get(Constants.STATUS))).toList();
+        primePlanIdCache(existingCbPlans);
+        //TODO - Need to remove draftData (if available) and also contextData.accessControl
+        log.info("Found {} CB Plans for orgId: {}, active count: {}", existingCbPlans.size(), orgId, activeCbPlans.size());
+        cbPlanCache.put(orgId, activeCbPlans);
+        isCacheEnabled.set(true);
+        return activeCbPlans;
+    }
+
+    private List<Map<String, Object>> sortCbPlansByEndDateDesc(List<Map<String, Object>> cbPlanList) {
+        return cbPlanList.stream()
+                .filter(m -> m.get(Constants.END_DATE_REQUEST) != null)
+                .sorted(Comparator.comparing(
+                        m -> (Instant) m.get(Constants.END_DATE_REQUEST),
+                        Comparator.reverseOrder()
+                ))
+                .toList();
+    }
+
+    private void primePlanIdCache(List<Map<String, Object>> existingCbPlans) {
         for (Map<String, Object> plan : existingCbPlans) {
             String id = (String) plan.get(Constants.PLAN_ID);
             if (id != null) {
                 planIdCache.put(id, plan);
             }
         }
-        //TODO - Need to remove draftData (if available) and also contextData.accessControl
-        log.info("Found {} CB Plans for orgId: {}, active count: {}", existingCbPlans.size(), orgId, activeCbPlans.size());
-        cbPlanCache.put(orgId, activeCbPlans);
-        isCacheEnabled.set(true);
-        return activeCbPlans;
     }
 
     public List<Map<String, Object>> getCbPlansByPlanIdsInBatch(List<String> planIds) {

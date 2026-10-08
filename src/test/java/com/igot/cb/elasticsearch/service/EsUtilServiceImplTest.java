@@ -19,7 +19,6 @@ import com.igot.cb.elasticsearch.dto.SearchCriteria;
 import com.igot.cb.elasticsearch.dto.SearchResult;
 import com.igot.cb.util.CbExtServerProperties;
 import com.igot.cb.util.Constants;
-import com.networknt.schema.JsonSchemaFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
@@ -382,7 +381,7 @@ class EsUtilServiceImplTest {
     }
 
     @Test
-    void testUnsupportedQueryType() throws Exception {
+    void testUnsupportedQueryType() {
         SearchCriteria criteria = createBasicSearchCriteria();
         
         Map<String, Object> query = new HashMap<>();
@@ -395,7 +394,7 @@ class EsUtilServiceImplTest {
     }
 
     @Test
-    void testMustNotQueryWithNonList() throws Exception {
+    void testMustNotQueryWithNonList() {
         SearchCriteria criteria = createBasicSearchCriteria();
         
         Map<String, Object> query = new HashMap<>();
@@ -408,7 +407,7 @@ class EsUtilServiceImplTest {
     }
 
     @Test
-    void testUnsupportedRangeCondition() throws Exception {
+    void testUnsupportedRangeCondition() {
         SearchCriteria criteria = createBasicSearchCriteria();
         
         Map<String, Object> rangeConditions = new HashMap<>();

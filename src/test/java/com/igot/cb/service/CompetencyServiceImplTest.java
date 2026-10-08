@@ -152,9 +152,9 @@ class CompetencyServiceImplTest {
 
         // Cache should be populated
         verify(redisCacheMgr).putInCache(
-                eq(Constants.USER_COMPETENCY_REDIS_KEY_PREFIX + userId),
-                eq(serializedJson),
-                eq(CACHE_TTL));
+                Constants.USER_COMPETENCY_REDIS_KEY_PREFIX + userId,
+                serializedJson,
+                CACHE_TTL);
         verify(kafkaTemplate, never()).send(anyString(), anyString());
     }
 

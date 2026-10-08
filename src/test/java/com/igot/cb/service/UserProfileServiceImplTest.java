@@ -9,19 +9,14 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
 
 import java.lang.reflect.Field;
-import java.util.Collections;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import java.lang.reflect.Field;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -135,7 +130,7 @@ class UserProfileServiceImplTest {
     }
 
     @Test
-    void testGetUserProfile_NullCadreDetails() throws Exception {
+    void testGetUserProfile_NullCadreDetails() {
         when(redisCacheMgr.getFromCache(anyString())).thenReturn(null);
         Map<String, Object> professionalDetails = new HashMap<>();
         professionalDetails.put("designation", "teacher");

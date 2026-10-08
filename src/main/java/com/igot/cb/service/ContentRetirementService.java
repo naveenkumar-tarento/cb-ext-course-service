@@ -186,31 +186,34 @@ public class ContentRetirementService {
             log.info("No approved retirement requests found by retire_date");
         }
 
-        for (Map<String, Object> record : retirementRequestsByRetirementDate) {
-            String status = (String) record.get(Constants.STATUS);
-            if (!Constants.APPROVED.equalsIgnoreCase(status == null ? "" : status)) {
-                log.debug("Skipping retirement notification for content {} as status {}", record.get(Constants.CONTENT_ID_KEY), status);
-                continue;
-            }
-
-            String contentId = (String) record.get(Constants.CONTENT_ID);
-            LocalDate retirementDate = (LocalDate) record.get(Constants.RETIREMENT_DATE);
-
-            String notificationType = null;
-            if (retirementDate != null && retirementDate.equals(today.plusDays(1))) {
-                notificationType = Constants.REMINDER_NOTIFICATION_ONE_DAY;
-            } else if (retirementDate != null && retirementDate.equals(today.plusDays(7))) {
-                notificationType = Constants.REMINDER_NOTIFICATION_SEVEN_DAY;
-            }
-
-            if (!StringUtils.hasText(notificationType)) {
-                continue;
-            }
-
-            log.info("Triggering {} notification for content {}", notificationType, contentId);
-            validateAndSendInAppLearerNotification(contentId, notificationType, retirementDate);
-
+        for (Map<String, Object> notificationRecord : retirementRequestsByRetirementDate) {
+            processRetirementDateNotification(notificationRecord, today);
         }
+    }
+
+    private void processRetirementDateNotification(Map<String, Object> notificationRecord, LocalDate today) {
+        String status = (String) notificationRecord.get(Constants.STATUS);
+        if (!Constants.APPROVED.equalsIgnoreCase(status == null ? "" : status)) {
+            log.debug("Skipping retirement notification for content {} as status {}", notificationRecord.get(Constants.CONTENT_ID_KEY), status);
+            return;
+        }
+
+        String contentId = (String) notificationRecord.get(Constants.CONTENT_ID);
+        LocalDate retirementDate = (LocalDate) notificationRecord.get(Constants.RETIREMENT_DATE);
+
+        String notificationType = null;
+        if (retirementDate != null && retirementDate.equals(today.plusDays(1))) {
+            notificationType = Constants.REMINDER_NOTIFICATION_ONE_DAY;
+        } else if (retirementDate != null && retirementDate.equals(today.plusDays(7))) {
+            notificationType = Constants.REMINDER_NOTIFICATION_SEVEN_DAY;
+        }
+
+        if (!StringUtils.hasText(notificationType)) {
+            return;
+        }
+
+        log.info("Triggering {} notification for content {}", notificationType, contentId);
+        validateAndSendInAppLearerNotification(contentId, notificationType, retirementDate);
     }
 
     public void sendContentRetirementNotificationsToSpv() {
@@ -240,6 +243,15 @@ public class ContentRetirementService {
         List<Map<String, String>> spvPublishers = fetchSpvPublishers();
         List<String> spvPublisherUserIds = new ArrayList<>();
         List<String> spvPublisherEmails = new ArrayList<>();
+        collectSpvPublisherIdentifiers(spvPublishers, spvPublisherUserIds, spvPublisherEmails);
+        Set<String> finalRecipients = new HashSet<>(spvPublisherUserIds);
+        for (Map<String, Object> requestRecord : retirementRequests) {
+            processSpvRetirementRequest(requestRecord, today, finalRecipients, spvPublisherEmails);
+        }
+    }
+
+    private void collectSpvPublisherIdentifiers(List<Map<String, String>> spvPublishers,
+            List<String> spvPublisherUserIds, List<String> spvPublisherEmails) {
         for (Map<String, String> publisher : spvPublishers) {
             String userId = publisher.get(Constants.USER_ID);
             String email  = publisher.get(Constants.EMAIL);
@@ -250,37 +262,35 @@ public class ContentRetirementService {
                 spvPublisherEmails.add(email);
             }
         }
-        Set<String> finalRecipients = new HashSet<>(spvPublisherUserIds);
-        for (Map<String, Object> record : retirementRequests) {
-            String contentId = (String) record.get(Constants.CONTENT_ID);
-            Object createdObj = record.get(Constants.CREATED_DATE);
-            LocalDate createdDate = null;
-            if (createdObj instanceof Instant instant) {
-                createdDate = instant.atZone(ZoneId.systemDefault()).toLocalDate();
-            } else if (createdObj instanceof LocalDate localDate) {
-                createdDate = localDate;
-            }
-            String requestedBy = (String) record.get(Constants.USER_ID_RAISED_FIELD);
-            if (createdDate == null || !createdDate.equals(today)) continue;
-            if (finalRecipients.isEmpty()) continue;
-            log.info("Triggering retirement approved notification for content {}", contentId);
-            Map<String, Object> content =
-                    contentService.readContent(contentId, List.of("name"));
-            String contentName =
-                    (String) content.get("name");
-            Object retirementDateObj = record.get(Constants.RETIREMENT_DATE);
-            LocalDate retirementDate = null;
-            if (retirementDateObj instanceof Instant instant) {
-                retirementDate = instant.atZone(ZoneId.systemDefault()).toLocalDate();
-            } else if (retirementDateObj instanceof LocalDate localDate) {
-                retirementDate = localDate;
-            }
-            notificationService.sendNotificationForContentRetirementSpv(
-                    contentId,  contentName,
-                    new ArrayList<>(finalRecipients),
-                    Constants.CONTENT_RETIREMENT_SCHEDULED_NOTIFICATION, retirementDate, spvPublisherEmails, requestedBy
-            );
+    }
+
+    private void processSpvRetirementRequest(Map<String, Object> requestRecord, LocalDate today,
+            Set<String> finalRecipients, List<String> spvPublisherEmails) {
+        String contentId = (String) requestRecord.get(Constants.CONTENT_ID);
+        LocalDate createdDate = resolveLocalDate(requestRecord.get(Constants.CREATED_DATE));
+        String requestedBy = (String) requestRecord.get(Constants.USER_ID_RAISED_FIELD);
+        if (createdDate == null || !createdDate.equals(today)) return;
+        if (finalRecipients.isEmpty()) return;
+        log.info("Triggering retirement approved notification for content {}", contentId);
+        Map<String, Object> content =
+                contentService.readContent(contentId, List.of("name"));
+        String contentName =
+                (String) content.get("name");
+        LocalDate retirementDate = resolveLocalDate(requestRecord.get(Constants.RETIREMENT_DATE));
+        notificationService.sendNotificationForContentRetirementSpv(
+                contentId,  contentName,
+                new ArrayList<>(finalRecipients),
+                Constants.CONTENT_RETIREMENT_SCHEDULED_NOTIFICATION, retirementDate, spvPublisherEmails, requestedBy
+        );
+    }
+
+    private LocalDate resolveLocalDate(Object dateObj) {
+        if (dateObj instanceof Instant instant) {
+            return instant.atZone(ZoneId.systemDefault()).toLocalDate();
+        } else if (dateObj instanceof LocalDate localDate) {
+            return localDate;
         }
+        return null;
     }
 
     private List<Map<String, String>> fetchSpvPublishers() {
@@ -323,28 +333,31 @@ public class ContentRetirementService {
             return publishers;
         }
         for (Object item : contents) {
-            if (!(item instanceof Map<?, ?> content)) continue;
-
-            Object userIdObj = content.get(Constants.USER_ID);
-            if (!(userIdObj instanceof String userId) || !StringUtils.hasText(userId)) continue;
-
-            Object profileDetailsObj = content.get(Constants.PROFILE_DETAILS);
-            if (!(profileDetailsObj instanceof Map<?, ?> profileDetails)) continue;
-
-            Object personalDetailsObj = profileDetails.get(Constants.PERSONAL_DETAILS);
-            if (!(personalDetailsObj instanceof Map<?, ?> personalDetails)) continue;
-
-            Object emailObj = personalDetails.get(Constants.PRIMARY_EMAIL);
-            if (!(emailObj instanceof String email) || !StringUtils.hasText(email)) continue;
-
-            Map<String, String> record = new HashMap<>();
-            record.put(Constants.USER_ID, userId);
-            record.put(Constants.EMAIL, email);
-
-            publishers.add(record);
+            buildPublisherRecord(item).ifPresent(publishers::add);
         }
         log.info("[FETCH-SPV][SUCCESS] totalPublishers={}", publishers.size());
         return publishers;
+    }
+
+    private Optional<Map<String, String>> buildPublisherRecord(Object item) {
+        if (!(item instanceof Map<?, ?> content)) return Optional.empty();
+
+        Object userIdObj = content.get(Constants.USER_ID);
+        if (!(userIdObj instanceof String userId) || !StringUtils.hasText(userId)) return Optional.empty();
+
+        Object profileDetailsObj = content.get(Constants.PROFILE_DETAILS);
+        if (!(profileDetailsObj instanceof Map<?, ?> profileDetails)) return Optional.empty();
+
+        Object personalDetailsObj = profileDetails.get(Constants.PERSONAL_DETAILS);
+        if (!(personalDetailsObj instanceof Map<?, ?> personalDetails)) return Optional.empty();
+
+        Object emailObj = personalDetails.get(Constants.PRIMARY_EMAIL);
+        if (!(emailObj instanceof String email) || !StringUtils.hasText(email)) return Optional.empty();
+
+        Map<String, String> publisherRecord = new HashMap<>();
+        publisherRecord.put(Constants.USER_ID, userId);
+        publisherRecord.put(Constants.EMAIL, email);
+        return Optional.of(publisherRecord);
     }
 
     private void validateAndSendInAppLearerNotification(String contentId, String notificationType, LocalDate retirementDate) {
@@ -359,6 +372,8 @@ public class ContentRetirementService {
                 log.info("No batches found for content {}", contentId);
                 return;
             }
+
+            String courseName = (String) content.get(Constants.NAME);
 
             for (Map<String, Object> batch : batches) {
 
@@ -378,61 +393,62 @@ public class ContentRetirementService {
                 }
 
                 for (Map<String, Object> batchUser : batchUsers) {
-
-                    String userId = (String) batchUser.get(Constants.USER_ID);
-                    Map<String, Object> enrolmentProperties = Map.of(
-                            Constants.USER_ID, userId,
-                            Constants.COURSE_ID, contentId,
-                            Constants.BATCH_ID, batchId
-                    );
-
-                    List<Map<String, Object>> enrolment =
-                            cassandraOperation.getRecordsByProperties(
-                                    Constants.KEYSPACE_SUNBIRD_COURSE,
-                                    Constants.USER_ENROLMENTS_V2_TABLE,
-                                    enrolmentProperties,
-                                    null,
-                                    null
-                            );
-
-                    if (CollectionUtils.isEmpty(enrolment)) {
-                        continue;
-                    }
-
-                    List<Map<String, Object>> eligibleEnrolments =
-                            enrolment.stream()
-                                    .filter(Objects::nonNull)
-                                    .filter(e -> {
-                                        Object statusObj = e.get(Constants.STATUS);
-                                        Object activeObj = e.get(Constants.ACTIVE);
-                                        Object certificates = e.get(Constants.ISSUED_CERTIFICATES);
-
-                                        return statusObj instanceof Integer
-                                                && activeObj instanceof Boolean
-                                                && !Objects.equals(statusObj, 2)
-                                                && (certificates == null || ((List<?>) certificates).isEmpty())
-                                                && Boolean.TRUE.equals(activeObj);
-                                    })
-                                    .toList();
-
-
-                    if (CollectionUtils.isEmpty(eligibleEnrolments)) {
-                        continue;
-                    }
-                    String courseName = (String) content.get(Constants.NAME);
-                    notificationService.sendNotificationForContentRetirement(
-                            contentId,
-                            courseName,
-                            retirementDate,
-                            List.of(userId),
-                            notificationType
-                    );
-
+                    processBatchUserRetirementNotification(batchUser, contentId, batchId, courseName, retirementDate, notificationType);
                 }
             }
         } catch (Exception e) {
             log.error("Error while sending in-app notification for content retirement", e);
         }
+    }
+
+    private void processBatchUserRetirementNotification(Map<String, Object> batchUser, String contentId, String batchId,
+            String courseName, LocalDate retirementDate, String notificationType) {
+        String userId = (String) batchUser.get(Constants.USER_ID);
+        Map<String, Object> enrolmentProperties = Map.of(
+                Constants.USER_ID, userId,
+                Constants.COURSE_ID, contentId,
+                Constants.BATCH_ID, batchId
+        );
+
+        List<Map<String, Object>> enrolment =
+                cassandraOperation.getRecordsByProperties(
+                        Constants.KEYSPACE_SUNBIRD_COURSE,
+                        Constants.USER_ENROLMENTS_V2_TABLE,
+                        enrolmentProperties,
+                        null,
+                        null
+                );
+
+        if (CollectionUtils.isEmpty(enrolment)) {
+            return;
+        }
+
+        List<Map<String, Object>> eligibleEnrolments =
+                enrolment.stream()
+                        .filter(Objects::nonNull)
+                        .filter(e -> {
+                            Object statusObj = e.get(Constants.STATUS);
+                            Object activeObj = e.get(Constants.ACTIVE);
+                            Object certificates = e.get(Constants.ISSUED_CERTIFICATES);
+
+                            return statusObj instanceof Integer
+                                    && activeObj instanceof Boolean
+                                    && !Objects.equals(statusObj, 2)
+                                    && (certificates == null || ((List<?>) certificates).isEmpty())
+                                    && Boolean.TRUE.equals(activeObj);
+                        })
+                        .toList();
+
+        if (CollectionUtils.isEmpty(eligibleEnrolments)) {
+            return;
+        }
+        notificationService.sendNotificationForContentRetirement(
+                contentId,
+                courseName,
+                retirementDate,
+                List.of(userId),
+                notificationType
+        );
     }
 
     private void sendApprovedRetirementNotifications(List<Map<String, Object>> retirementRequestsByApproveDate, LocalDate today) {

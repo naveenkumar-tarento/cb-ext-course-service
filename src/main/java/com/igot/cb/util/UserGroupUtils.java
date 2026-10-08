@@ -1,15 +1,15 @@
 package com.igot.cb.util;
 
-import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * Utility class for user group operations.
  */
 public class UserGroupUtils {
+
+    private UserGroupUtils() {
+    }
 
     /**
      * Validates that no criteria key or value is empty in the userGroups list.
@@ -23,36 +23,56 @@ public class UserGroupUtils {
             Object criteriaListObj = userGroup.get(Constants.USER_GROUP_CRITERIA_LIST);
             if (criteriaListObj instanceof List) {
                 List<Map<String, Object>> criteriaList = (List<Map<String, Object>>) criteriaListObj;
-                for (Map<String, Object> criteria : criteriaList) {
-                    Object key = criteria.get(Constants.CRITERIA_KEY);
-                    Object value = criteria.get(Constants.CRITERIA_VALUE);
-                    if (key == null || key.toString().trim().isEmpty() || value == null) {
-                        return "Criteria key and value must not be empty";
-                    }
-                    if (value instanceof String) {
-                        if (((String) value).trim().isEmpty()) {
-                            return "Criteria key and value must not be empty";
-                        }
-                    } else if (value instanceof List) {
-                        List<?> valueList = (List<?>) value;
-                        if (valueList.isEmpty()) {
-                            return "Criteria value list must not be empty";
-                        }
-                        for (Object eachValue : valueList) {
-                            if (eachValue == null) {
-                                return "Criteria value list must not contain null values";
-                            }
-                            if (eachValue instanceof String && ((String) eachValue).trim().isEmpty()) {
-                                return "Criteria value list must not contain empty or blank values";
-                            }
-                            // Boolean true/false are both valid, only null is invalid (already checked)
-                        }
-                    } else if (!(value instanceof Boolean)) {
-                        // Only String, List, or Boolean are allowed
-                        return "Criteria value must be a String, Boolean, or List";
-                    }
+                String error = validateCriteriaList(criteriaList);
+                if (error != null) {
+                    return error;
                 }
             }
+        }
+        return null;
+    }
+
+    private static String validateCriteriaList(List<Map<String, Object>> criteriaList) {
+        for (Map<String, Object> criteria : criteriaList) {
+            String error = validateCriteria(criteria);
+            if (error != null) {
+                return error;
+            }
+        }
+        return null;
+    }
+
+    private static String validateCriteria(Map<String, Object> criteria) {
+        Object key = criteria.get(Constants.CRITERIA_KEY);
+        Object value = criteria.get(Constants.CRITERIA_VALUE);
+        if (key == null || key.toString().trim().isEmpty() || value == null) {
+            return "Criteria key and value must not be empty";
+        }
+        if (value instanceof String str) {
+            if (str.trim().isEmpty()) {
+                return "Criteria key and value must not be empty";
+            }
+        } else if (value instanceof List) {
+            return validateCriteriaValueList((List<?>) value);
+        } else if (!(value instanceof Boolean)) {
+            // Only String, List, or Boolean are allowed
+            return "Criteria value must be a String, Boolean, or List";
+        }
+        return null;
+    }
+
+    private static String validateCriteriaValueList(List<?> valueList) {
+        if (valueList.isEmpty()) {
+            return "Criteria value list must not be empty";
+        }
+        for (Object eachValue : valueList) {
+            if (eachValue == null) {
+                return "Criteria value list must not contain null values";
+            }
+            if (eachValue instanceof String str && str.trim().isEmpty()) {
+                return "Criteria value list must not contain empty or blank values";
+            }
+            // Boolean true/false are both valid, only null is invalid (already checked)
         }
         return null;
     }

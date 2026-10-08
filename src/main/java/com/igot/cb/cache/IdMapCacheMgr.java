@@ -49,6 +49,23 @@ public class IdMapCacheMgr {
     public Map<String, Integer> getId(List<String> keys) {
         StringBuilder missingKeys = new StringBuilder();
         Map<String, Integer> result = new HashMap<>();
+        resolveFromCache(keys, result, missingKeys);
+        if (missingKeys.isEmpty()) {
+            return result;
+        }
+        missingKeys.setLength(missingKeys.length() - 1);
+        List<String> missingKeysList = Arrays.asList(missingKeys.toString().split(Constants.HASH));
+        int batchSize = 50;
+        List<List<String>> batches = createBatches(missingKeysList, batchSize);
+        for (List<String> batch : batches) {
+            if (!fetchAndCacheBatch(batch, result)) {
+                break;
+            }
+        }
+        return result;
+    }
+
+    private void resolveFromCache(List<String> keys, Map<String, Integer> result, StringBuilder missingKeys) {
         for (String key : keys) {
             String keyTrimmed = key.trim().toLowerCase();
             if (cacheMap.containsKey(keyTrimmed)) {
@@ -62,41 +79,35 @@ public class IdMapCacheMgr {
                 missingKeys.append(key).append(Constants.HASH);
             }
         }
-        if (missingKeys.isEmpty()) {
-            return result;
+    }
+
+    private boolean fetchAndCacheBatch(List<String> batch, Map<String, Integer> result) {
+        URI uri = UriComponentsBuilder
+                .fromHttpUrl(propertiesCache.getProperty(Constants.ID_MAP_SERVICE_URL)
+                        + propertiesCache.getProperty(Constants.ID_MAP_SERVICE_READ_ENDPOINT))
+                .queryParam(Constants.ID_MAP_SERVICE_PARAM_LIST, String.join(Constants.HASH, batch))
+                .queryParam(Constants.ID_MAP_SERVICE_PARAM_SEPARATOR, Constants.HASH)
+                .build().encode().toUri();
+
+        ParameterizedTypeReference<List<Map<String, Integer>>> responseType = new ParameterizedTypeReference<>() {};
+        List<Map<String, Integer>> response = outboundRequestHandlerService
+                .fetchResultUsingExchange(uri.toString(), responseType);
+
+        boolean shouldContinue = true;
+        if (CollectionUtils.isEmpty(response)) {
+            log.error("IdMapCacheMgr::getId: No response from ID Map service for keys: {}", batch);
+            shouldContinue = false;
         } else {
-            missingKeys.setLength(missingKeys.length() - 1);
-            List<String> missingKeysList = Arrays.asList(missingKeys.toString().split(Constants.HASH));
-            int batchSize = 50;
-            List<List<String>> batches = createBatches(missingKeysList, batchSize);
-            for (List<String> batch : batches) {
-                URI uri = UriComponentsBuilder
-                        .fromHttpUrl(propertiesCache.getProperty(Constants.ID_MAP_SERVICE_URL)
-                                + propertiesCache.getProperty(Constants.ID_MAP_SERVICE_READ_ENDPOINT))
-                        .queryParam(Constants.ID_MAP_SERVICE_PARAM_LIST, String.join(Constants.HASH, batch))
-                        .queryParam(Constants.ID_MAP_SERVICE_PARAM_SEPARATOR, Constants.HASH)
-                        .build().encode().toUri();
-
-                ParameterizedTypeReference<List<Map<String, Integer>>> responseType = new ParameterizedTypeReference<>() {};
-                List<Map<String, Integer>> response = outboundRequestHandlerService
-                        .fetchResultUsingExchange(uri.toString(), responseType);
-
-                if (CollectionUtils.isEmpty(response)) {
-                    log.error("IdMapCacheMgr::getId: No response from ID Map service for keys: {}", batch);
-                    break;
-                } else {
-                    response.stream()
-                        .flatMap(responseObject -> responseObject.entrySet().stream())
-                        .forEach(entry -> {
-                            String decodedKey = decodeKey(entry.getKey());
-                            cacheMap.put(decodedKey, new CachedIdMap(entry.getValue(), defaultExpiryTime));
-                            result.put(decodedKey, entry.getValue());
-                        });
-                }
-                log.info("IdMapCacheMgr::getId: request url : {}, response: {}", uri.toString(), result);
-            }
+            response.stream()
+                .flatMap(responseObject -> responseObject.entrySet().stream())
+                .forEach(entry -> {
+                    String decodedKey = decodeKey(entry.getKey());
+                    cacheMap.put(decodedKey, new CachedIdMap(entry.getValue(), defaultExpiryTime));
+                    result.put(decodedKey, entry.getValue());
+                });
         }
-        return result;
+        log.info("IdMapCacheMgr::getId: request url : {}, response: {}", uri.toString(), result);
+        return shouldContinue;
     }
 
     private List<List<String>> createBatches(List<String> missingKeys, int batchSize) {

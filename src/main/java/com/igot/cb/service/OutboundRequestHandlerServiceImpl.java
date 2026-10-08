@@ -29,6 +29,12 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 @Slf4j
 public class OutboundRequestHandlerServiceImpl {
+	private static final String FAILED_TO_CALL_REST_URL = "Failed to call rest URL: {}";
+	private static final String ERROR_RECEIVED = "Error received: ";
+	private static final String ERROR_RESPONSE = "Error Response: ";
+	private static final String FAILED_TO_PARSE_ERROR_RESPONSE_WITH_BODY = "Failed to parse error response: {}";
+	private static final String FAILED_TO_PARSE_ERROR_RESPONSE = "Failed to parse error response: ";
+
 	private final RestTemplate restTemplate;
 	private final ObjectMapper objectMapper;
 
@@ -50,21 +56,21 @@ public class OutboundRequestHandlerServiceImpl {
 			}
 			response = restTemplate.getForObject(uri, Map.class);
 		} catch (HttpClientErrorException e) {
-			log.error("Failed to call rest URL: {}", uri, e);
+			log.error(FAILED_TO_CALL_REST_URL, uri, e);
 			try {
 				response = objectMapper.readValue(e.getResponseBodyAsString(),
 						new TypeReference<Map<String, Object>>() {
 						});
 			} catch (Exception e1) {
-				log.debug("Failed to parse error response: {}", e.getResponseBodyAsString(), e1);
+				log.debug(FAILED_TO_PARSE_ERROR_RESPONSE_WITH_BODY, e.getResponseBodyAsString(), e1);
 			}
-			log.error("Error received: " + e.getResponseBodyAsString(), e);
+			log.error(ERROR_RECEIVED + e.getResponseBodyAsString(), e);
 		} catch (Exception e) {
-			log.error("Failed to call rest URL: {}", uri, e);
+			log.error(FAILED_TO_CALL_REST_URL, uri, e);
 			try {
-				log.warn("Error Response: " + objectMapper.writeValueAsString(response));
+				log.warn(ERROR_RESPONSE + objectMapper.writeValueAsString(response));
 			} catch (Exception e1) {
-				log.debug("Failed to parse error response: ", e1);
+				log.debug(FAILED_TO_PARSE_ERROR_RESPONSE, e1);
 			}
 		}
 		return response;
@@ -84,19 +90,19 @@ public class OutboundRequestHandlerServiceImpl {
 		} catch (HttpClientErrorException e) {
 			log.error("Failed to call rest URL: {}, received error: {}", uri, e.getResponseBodyAsString(), e);
 			try {
-				response = objectMapper.readValue(e.getResponseBodyAsString(),
+				objectMapper.readValue(e.getResponseBodyAsString(),
 						new TypeReference<Map<String, Object>>() {
 						});
 			} catch (Exception e1) {
-				log.debug("Failed to parse error response: {}", e.getResponseBodyAsString(), e1);
+				log.debug(FAILED_TO_PARSE_ERROR_RESPONSE_WITH_BODY, e.getResponseBodyAsString(), e1);
 			}
-			log.error("Error received: " + e.getResponseBodyAsString(), e);
+			log.error(ERROR_RECEIVED + e.getResponseBodyAsString(), e);
 		} catch (Exception e) {
-			log.error("Failed to call rest URL: {}", uri, e);
+			log.error(FAILED_TO_CALL_REST_URL, uri, e);
 			try {
-				log.warn("Error Response: " + objectMapper.writeValueAsString(response));
+				log.warn(ERROR_RESPONSE + objectMapper.writeValueAsString(response));
 			} catch (Exception e1) {
-				log.debug("Failed to parse error response: ", e1);
+				log.debug(FAILED_TO_PARSE_ERROR_RESPONSE, e1);
 			}
 		}
 		return null;
@@ -107,7 +113,7 @@ public class OutboundRequestHandlerServiceImpl {
 		try {
 			HttpHeaders headers = new HttpHeaders();
 			if (!CollectionUtils.isEmpty(headersValues)) {
-				headersValues.forEach((k, v) -> headers.set(k, v));
+				headersValues.forEach(headers::set);
 			}
 			headers.setContentType(MediaType.APPLICATION_JSON);
 			HttpEntity<Object> entity = new HttpEntity<>(request, headers);
@@ -124,8 +130,9 @@ public class OutboundRequestHandlerServiceImpl {
 						new TypeReference<HashMap<String, Object>>() {
 						});
 			} catch (Exception e1) {
+				log.debug(FAILED_TO_PARSE_ERROR_RESPONSE_WITH_BODY, e.getResponseBodyAsString(), e1);
 			}
-			log.error("Error received: " + e.getResponseBodyAsString(), e);
+			log.error(ERROR_RECEIVED + e.getResponseBodyAsString(), e);
 		}
 		if (response == null) {
 			return MapUtils.EMPTY_MAP;
@@ -144,14 +151,14 @@ public class OutboundRequestHandlerServiceImpl {
         try {
             HttpHeaders headers = new HttpHeaders();
             if (!CollectionUtils.isEmpty(headersValues)) {
-                headersValues.forEach((k, v) -> headers.set(k, v));
+                headersValues.forEach(headers::set);
             }
             headers.setContentType(MediaType.APPLICATION_JSON);
             HttpEntity<Object> entity = new HttpEntity<>(request, headers);
             if (log.isDebugEnabled()) {
                 StringBuilder str = new StringBuilder(this.getClass().getCanonicalName()).append(".fetchResult")
                         .append(System.lineSeparator());
-                str.append("URI: ").append(uri).append(System.lineSeparator());
+                str.append(Constants.URI_CONSTANT).append(uri).append(System.lineSeparator());
                 str.append("Request: ").append(mapper.writeValueAsString(request)).append(System.lineSeparator());
                 log.debug(str.toString());
             }
@@ -167,22 +174,22 @@ public class OutboundRequestHandlerServiceImpl {
                         new TypeReference<HashMap<String, Object>>() {
                         });
             } catch (Exception e1) {
-                log.debug("Failed to parse error response: {}", hce.getResponseBodyAsString(), e1);
+                log.debug(FAILED_TO_PARSE_ERROR_RESPONSE_WITH_BODY, hce.getResponseBodyAsString(), e1);
             }
-            log.error("Error received: " + hce.getResponseBodyAsString(), hce);
+            log.error(ERROR_RECEIVED + hce.getResponseBodyAsString(), hce);
         } catch (JsonProcessingException e) {
             log.error(e.getMessage(), e);
             try {
-                log.warn("Error Response: " + mapper.writeValueAsString(response));
+                log.warn(ERROR_RESPONSE + mapper.writeValueAsString(response));
             } catch (Exception e1) {
-                log.debug("Failed to parse error response: ", e1);
+                log.debug(FAILED_TO_PARSE_ERROR_RESPONSE, e1);
             }
         } catch (Exception e) {
-            log.error("Failed to call rest URL: {}", uri, e);
+            log.error(FAILED_TO_CALL_REST_URL, uri, e);
             try {
-                log.warn("Error Response: " + mapper.writeValueAsString(response));
+                log.warn(ERROR_RESPONSE + mapper.writeValueAsString(response));
             } catch (Exception e1) {
-                log.debug("Failed to parse error response: ", e1);
+                log.debug(FAILED_TO_PARSE_ERROR_RESPONSE, e1);
             }
         }
         return response;
@@ -214,16 +221,16 @@ public class OutboundRequestHandlerServiceImpl {
                 StringBuilder str = new StringBuilder(this.getClass().getCanonicalName())
                         .append(".fetchResultUsingDelete")
                         .append(System.lineSeparator());
-                str.append("URI: ").append(uri).append(System.lineSeparator());
+                str.append(Constants.URI_CONSTANT).append(uri).append(System.lineSeparator());
                 str.append("Request: ").append(mapper.writeValueAsString(request)).append(System.lineSeparator());
                 log.debug(str.toString());
             }
 
-            ResponseEntity<Map> responseEntity = restTemplate.exchange(
+            ResponseEntity<Map<String, Object>> responseEntity = restTemplate.exchange(
                     uri,
                     HttpMethod.DELETE,
                     entity,
-                    Map.class
+                    new ParameterizedTypeReference<Map<String, Object>>() {}
             );
 
             response = responseEntity.getBody();
@@ -240,7 +247,7 @@ public class OutboundRequestHandlerServiceImpl {
                         new TypeReference<HashMap<String, Object>>() {}
                 );
             } catch (Exception e1) {
-                log.debug("Failed to parse error response: {}", hce.getResponseBodyAsString(), e1);
+                log.debug(FAILED_TO_PARSE_ERROR_RESPONSE_WITH_BODY, hce.getResponseBodyAsString(), e1);
             }
 
             log.error("Error received: {}", hce.getResponseBodyAsString(), hce);
@@ -279,14 +286,14 @@ public class OutboundRequestHandlerServiceImpl {
 				StringBuilder str = new StringBuilder(this.getClass().getCanonicalName())
 						.append(".fetchResultUsingGet")
 						.append(System.lineSeparator());
-				str.append("URI: ").append(uri).append(System.lineSeparator());
+				str.append(Constants.URI_CONSTANT).append(uri).append(System.lineSeparator());
 				log.debug(str.toString());
 			}
-			ResponseEntity<Map> responseEntity = restTemplate.exchange(
+			ResponseEntity<Map<String, Object>> responseEntity = restTemplate.exchange(
 					uri,
 					HttpMethod.GET,
 					entity,
-					Map.class
+					new ParameterizedTypeReference<Map<String, Object>>() {}
 			);
 			response = responseEntity.getBody();
 			if (log.isDebugEnabled()) {
@@ -301,7 +308,7 @@ public class OutboundRequestHandlerServiceImpl {
 						new TypeReference<HashMap<String, Object>>() {
 						});
 			} catch (Exception e1) {
-				log.debug("Failed to parse error response: {}", hce.getResponseBodyAsString(), e1);
+				log.debug(FAILED_TO_PARSE_ERROR_RESPONSE_WITH_BODY, hce.getResponseBodyAsString(), e1);
 			}
 
 			log.error("Error received: {}", hce.getResponseBodyAsString(), hce);

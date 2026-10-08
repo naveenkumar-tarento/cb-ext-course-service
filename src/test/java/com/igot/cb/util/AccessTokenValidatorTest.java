@@ -24,7 +24,9 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.keycloak.common.util.Time;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
@@ -103,21 +105,11 @@ class AccessTokenValidatorTest {
         }
     }
 
-    @Test
-    void testValidateToken_NullToken() {
-        Map<String, Object> result = validator.validateToken(null);
-        assertTrue(result.isEmpty());
-    }
-
-    @Test
-    void testValidateToken_EmptyToken() {
-        Map<String, Object> result = validator.validateToken("");
-        assertTrue(result.isEmpty());
-    }
-
-    @Test
-    void testValidateToken_InvalidFormat() {
-        Map<String, Object> result = validator.validateToken("invalid.token");
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {"invalid.token"})
+    void testValidateToken_InvalidInputsReturnEmptyMap(String token) {
+        Map<String, Object> result = validator.validateToken(token);
         assertTrue(result.isEmpty());
     }
 

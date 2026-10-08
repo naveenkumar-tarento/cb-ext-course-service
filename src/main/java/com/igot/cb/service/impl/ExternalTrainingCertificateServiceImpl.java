@@ -6,7 +6,6 @@ import com.igot.cb.util.CbExtServerProperties;
 import com.igot.cb.util.Constants;
 import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
@@ -15,14 +14,20 @@ import java.util.*;
 @Component
 public class ExternalTrainingCertificateServiceImpl {
 
-    @Autowired
-    CbExtServerProperties serverProperties;
+    private static final String CERTIFICATE_TEMPLATE_NAME = "external training certificate template";
 
-    @Autowired
-    KafkaTemplate<String, String> kafkaTemplate;
+    private final CbExtServerProperties serverProperties;
 
-    @Autowired
-    private ObjectMapper mapper;
+    private final KafkaTemplate<String, String> kafkaTemplate;
+
+    private final ObjectMapper mapper;
+
+    public ExternalTrainingCertificateServiceImpl(CbExtServerProperties serverProperties,
+            KafkaTemplate<String, String> kafkaTemplate, ObjectMapper mapper) {
+        this.serverProperties = serverProperties;
+        this.kafkaTemplate = kafkaTemplate;
+        this.mapper = mapper;
+    }
 
     public void generateCertificateEventAndPushToKafka(Map<String, Object> userDetailsMap, Map<String, Object> eventDetailsMap) throws JsonProcessingException {
         String eventJson = generateCertificateEvent(userDetailsMap, eventDetailsMap);
@@ -56,12 +61,12 @@ public class ExternalTrainingCertificateServiceImpl {
         // edata
         Map<String, Object> edata = new HashMap<>();
         edata.put("eventType", "externalTraining");
-        edata.put("name", "external training certificate template");
+        edata.put("name", CERTIFICATE_TEMPLATE_NAME);
         edata.put("coursePosterImage", serverProperties.getExternalTrainingDefaultPosterImage());
         edata.put("tag", batchId);
 
         Map<String, Object> criteria = new HashMap<>();
-        criteria.put("narrative", "external training certificate template");
+        criteria.put("narrative", CERTIFICATE_TEMPLATE_NAME);
         edata.put("criteria", criteria);
 
         edata.put("issuedDate", issuedDate);
@@ -103,7 +108,7 @@ public class ExternalTrainingCertificateServiceImpl {
         Map<String, Object> related = new HashMap<>();
         related.put("batchId", batchId);
         related.put("eventId", eventId);
-        related.put("type", "external training certificate template");
+        related.put("type", CERTIFICATE_TEMPLATE_NAME);
         edata.put("related", related);
 
         edata.put("providerName", providerName);

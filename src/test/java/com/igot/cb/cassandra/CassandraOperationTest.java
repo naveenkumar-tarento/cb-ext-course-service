@@ -79,9 +79,9 @@ class CassandraOperationTest {
         String keyspaceName = "testKeyspace";
         String tableName = "testTable";
         List<Map<String, Object>> request = new ArrayList<>();
-        Map<String, Object> record = new HashMap<>();
-        record.put("id", "123");
-        request.add(record);
+        Map<String, Object> testRecord = new HashMap<>();
+        testRecord.put("id", "123");
+        request.add(testRecord);
 
         ApiResponse expectedResult = new ApiResponse();
         when(cassandraOperation.insertBulkRecord(keyspaceName, tableName, request)).thenReturn(expectedResult);

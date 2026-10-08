@@ -74,8 +74,7 @@ public class EsConfig {
                         new org.apache.http.message.BasicHeader("X-Elastic-Product", "Elasticsearch")});
         RestClient restClient = builder.build();
         ElasticsearchTransport elasticsearchTransport = new RestClientTransport(restClient, new JacksonJsonpMapper());
-        ElasticsearchClient client = new ElasticsearchClient(elasticsearchTransport);
-        return client;
+        return new ElasticsearchClient(elasticsearchTransport);
     }
 
     /**

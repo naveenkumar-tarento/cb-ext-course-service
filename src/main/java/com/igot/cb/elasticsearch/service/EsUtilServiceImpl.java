@@ -32,13 +32,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
 
 @Service
 @Slf4j
 @SuppressWarnings({"unchecked","deprecation"}) // deprecation: legacy factory usage for ES6 compatibility; unchecked: dynamic query map casting
 public class EsUtilServiceImpl implements EsUtilService{
-    private final EsConfig esConfig;
     private final ElasticsearchClient elasticsearchClient;
     private final CbExtServerProperties cbExtServerProperties;
     private final Logger logger = LogManager.getLogger(getClass());
@@ -47,7 +45,6 @@ public class EsUtilServiceImpl implements EsUtilService{
 
     public EsUtilServiceImpl(EsConfig esConfig, ElasticsearchClient elasticsearchClient, CbExtServerProperties cbExtServerProperties) {
         this.cbExtServerProperties = cbExtServerProperties;
-        this.esConfig = esConfig;
         this.elasticsearchClient = elasticsearchClient;
     }
 
@@ -56,17 +53,17 @@ public class EsUtilServiceImpl implements EsUtilService{
 
     @Override
     public String addDocument(
-            String esIndexName, String type, String id, Map<String, Object> document, String JsonFilePath) {
-        return addDocument(elasticsearchClient, esIndexName, type, id, document, JsonFilePath);
+            String esIndexName, String type, String id, Map<String, Object> document, String jsonFilePath) {
+        return addDocument(elasticsearchClient, esIndexName, type, id, document, jsonFilePath);
     }
 
     @Override
     public String addDocument(ElasticsearchClient client, String esIndexName, String type, String id,
-            Map<String, Object> document, String JsonFilePath) {
+            Map<String, Object> document, String jsonFilePath) {
         logger.info("EsUtilServiceImpl :: addDocument");
         try {
             JsonSchemaFactory schemaFactory = JsonSchemaFactory.getInstance();
-            InputStream schemaStream = schemaFactory.getClass().getResourceAsStream(JsonFilePath);
+            InputStream schemaStream = schemaFactory.getClass().getResourceAsStream(jsonFilePath);
             Map<String, Object> map = objectMapper.readValue(schemaStream,
                     new TypeReference<Map<String, Object>>() {
                     });
@@ -94,28 +91,20 @@ public class EsUtilServiceImpl implements EsUtilService{
 
     @Override
     public String updateDocument(
-            String index, String indexType, String entityId, Map<String, Object> updatedDocument, String JsonFilePath) {
+            String index, String indexType, String entityId, Map<String, Object> updatedDocument, String jsonFilePath) {
         try {
             // 1. Filter incoming map using schema (same logic as addDocument)
             JsonSchemaFactory schemaFactory = JsonSchemaFactory.getInstance();
-            try (InputStream schemaStream = schemaFactory.getClass().getResourceAsStream(JsonFilePath)) {
+            try (InputStream schemaStream = schemaFactory.getClass().getResourceAsStream(jsonFilePath)) {
                 Map<String, Object> schemaMap = objectMapper.readValue(schemaStream, new TypeReference<Map<String, Object>>() {});
                 updatedDocument.entrySet().removeIf(e -> !schemaMap.containsKey(e.getKey()));
             }
 
             Map<String, Object> merged = new HashMap<>();
-            boolean existingFound = false;
-            try {
-                GetResponse<Object> existing = elasticsearchClient.get(builder -> builder.index(index).id(entityId), Object.class);
-                if (existing.found()) {
-                    Object src = existing.source();
-                    if (src instanceof Map) {
-                        merged.putAll((Map<String,Object>) src);
-                        existingFound = true;
-                    }
-                }
-            } catch (Exception getEx) {
-                log.debug("ES get (for merge) failed for index={}, id={}, treating as upsert. Cause: {}", index, entityId, getEx.getMessage());
+            Map<String, Object> existingDocument = fetchExistingDocumentForMerge(index, entityId);
+            boolean existingFound = existingDocument != null;
+            if (existingFound) {
+                merged.putAll(existingDocument);
             }
 
             // 2. Merge (overwrite / add updated fields only)
@@ -136,6 +125,21 @@ public class EsUtilServiceImpl implements EsUtilService{
         }
     }
 
+    private Map<String, Object> fetchExistingDocumentForMerge(String index, String entityId) {
+        try {
+            GetResponse<Object> existing = elasticsearchClient.get(builder -> builder.index(index).id(entityId), Object.class);
+            if (existing.found()) {
+                Object src = existing.source();
+                if (src instanceof Map) {
+                    return (Map<String, Object>) src;
+                }
+            }
+        } catch (Exception getEx) {
+            log.debug("ES get (for merge) failed for index={}, id={}, treating as upsert. Cause: {}", index, entityId, getEx.getMessage());
+        }
+        return null;
+    }
+
     @Override
     public Map<String, Object> getDocumentById(String esIndexName, String id) {
         return getDocumentById(elasticsearchClient, esIndexName, id);
@@ -148,16 +152,16 @@ public class EsUtilServiceImpl implements EsUtilService{
             if (response.found() && response.source() instanceof Map) {
                 return (Map<String, Object>) response.source();
             }
-            return null;
+            return Collections.emptyMap();
         } catch (Exception e) {
             log.error("Error fetching document by id from ES. index={}, id={}: {}", esIndexName, id, e.getMessage(), e);
-            return null;
+            return Collections.emptyMap();
         }
     }
 
     @Override
-    public SearchResult searchDocuments(String esIndexName, SearchCriteria searchCriteria, String JsonFilePath) {
-        SearchRequest.Builder searchRequestBuilder = buildSearchRequest(searchCriteria, JsonFilePath);
+    public SearchResult searchDocuments(String esIndexName, SearchCriteria searchCriteria, String jsonFilePath) {
+        SearchRequest.Builder searchRequestBuilder = buildSearchRequest(searchCriteria, jsonFilePath);
         assert searchRequestBuilder != null;
         searchRequestBuilder.index(esIndexName);
         try {
@@ -251,7 +255,7 @@ public class EsUtilServiceImpl implements EsUtilService{
         return paginatedResult;
     }
 
-    private SearchRequest.Builder buildSearchRequest(SearchCriteria searchCriteria, String JsonFilePath) {
+    private SearchRequest.Builder buildSearchRequest(SearchCriteria searchCriteria, String jsonFilePath) {
         log.info("Building search query");
         if (searchCriteria == null || searchCriteria.toString().isEmpty()) {
             log.error("Search criteria body is missing");
@@ -260,7 +264,7 @@ public class EsUtilServiceImpl implements EsUtilService{
         BoolQuery.Builder boolQueryBuilder = buildFilterQuery(searchCriteria.getFilter());
         SearchRequest.Builder searchSourceBuilder = new SearchRequest.Builder();
         searchSourceBuilder.query(boolQueryBuilder.build()._toQuery());
-        addSortToSearchSourceBuilder(searchCriteria, searchSourceBuilder, JsonFilePath);
+        addSortToSearchSourceBuilder(searchCriteria, searchSourceBuilder, jsonFilePath);
         addRequestedFieldsToSearchSourceBuilder(searchCriteria, searchSourceBuilder);
         String searchString = searchCriteria.getSearchString();
         if (isNotBlank(searchString)) {
@@ -295,22 +299,25 @@ public class EsUtilServiceImpl implements EsUtilService{
                 case Constants.RANGE:
                     return buildRangeQuery((Map<String, Object>) value);
                 case Constants.MUST_NOT:
-                    if (value instanceof List) {
-                        BoolQuery.Builder boolQueryBuilder = QueryBuilders.bool();
-                        for (Object item : (List<?>) value) {
-                            if (item instanceof Map) {
-                                boolQueryBuilder.mustNot(buildQueryPart((Map<String, Object>) item));
-                            }
-                        }
-                        return boolQueryBuilder.build()._toQuery();
-                    } else {
-                        throw new IllegalArgumentException("must_not value should be a list of conditions");
-                    }
+                    return buildMustNotQueryPart(value);
                 default:
                     throw new IllegalArgumentException(Constants.UNSUPPORTED_QUERY + key);
             }
         }
         return null;
+    }
+
+    private Query buildMustNotQueryPart(Object value) {
+        if (!(value instanceof List)) {
+            throw new IllegalArgumentException("must_not value should be a list of conditions");
+        }
+        BoolQuery.Builder boolQueryBuilder = QueryBuilders.bool();
+        for (Object item : (List<?>) value) {
+            if (item instanceof Map) {
+                boolQueryBuilder.mustNot(buildQueryPart((Map<String, Object>) item));
+            }
+        }
+        return boolQueryBuilder.build()._toQuery();
     }
 
     private Query buildMatchQuery(Map<String, Object> matchMap) {
@@ -416,76 +423,97 @@ public class EsUtilServiceImpl implements EsUtilService{
         List<Query> mustNotQueries = new ArrayList<>();
         List<Query> boolQueries = new ArrayList<>();
         if (filterCriteriaMap != null) {
-            filterCriteriaMap.forEach(
-                    (field, value) -> {
-                        if (field.equals("must_not") && value instanceof ArrayList) {
-                            mustNotQueries.add(Query.of(q ->q.termsSet(t->t.field(field).terms((ArrayList<String>) value))));
-                        } else if (value instanceof Boolean) {
-                            boolQueries.add(Query.of(q ->q.term(t->t.field(field).value((boolean)value))));
-                        } else if (value instanceof List<?>) {
-                            List<FieldValue> termsList = ((List<?>) value).stream()
-                                    .map(v -> FieldValue.of(v.toString()))
-                                    .collect(Collectors.toList());
-                            if (cbExtServerProperties.getNonTextFields().contains(field)) {
-                                boolQueryBuilder.must(Query.of(q -> q.terms(t -> t.field(field).terms(terms -> terms.value(termsList)))));
-                            } else {
-                                boolQueryBuilder.must(Query.of(q -> q.terms(t -> t.field(field + Constants.KEYWORD).terms(terms -> terms.value(termsList)))));
-                            }
-                        } else if (value instanceof String) {
-                            boolQueryBuilder.must(Query.of(q -> q.terms(t ->
-                                    t.field(field + Constants.KEYWORD)
-                                            .terms(terms -> terms.value(List.of(FieldValue.of((String) value))))
-                            )));
-                        } else if (value instanceof Set) {
-                            Set<String> termsSet = (Set<String>) value;
-                            List<FieldValue> termsList = termsSet.stream()
-                                    .map(FieldValue::of)
-                                    .toList();
-                            boolQueryBuilder.must(Query.of(q -> q.terms(t -> t.field(field + Constants.KEYWORD).terms(terms -> terms.value(termsList)))));
-                        } else if (value instanceof Map) {
-                            Map<String, Object> nestedMap = (Map<String, Object>) value;
-                            if (isRangeQuery(nestedMap)) {
-                                // Handle range query
-                                BoolQuery.Builder rangeOrNullQuery = QueryBuilders.bool();
-                                RangeQuery.Builder rangeQuery = QueryBuilders.range().field(field);
-                                nestedMap.forEach((rangeOperator, rangeValue) -> {
-                                    switch (rangeOperator) {
-                                        case Constants.SEARCH_OPERATION_GREATER_THAN_EQUALS:
-                                            rangeQuery.gte(JsonData.of(rangeValue));
-                                            break;
-                                        case Constants.SEARCH_OPERATION_LESS_THAN_EQUALS:
-                                            rangeQuery.lte(JsonData.of(rangeValue));
-                                            break;
-                                        case Constants.SEARCH_OPERATION_GREATER_THAN:
-                                            rangeQuery.gt(JsonData.of(rangeValue));
-                                            break;
-                                        case Constants.SEARCH_OPERATION_LESS_THAN:
-                                            rangeQuery.lt(JsonData.of(rangeValue));
-                                            break;
-                                    }
-                                });
-                                rangeOrNullQuery.should(rangeQuery.build()._toQuery());
-                                rangeOrNullQuery.should(Query.of(q -> q.bool(b -> b.mustNot(Query.of(qn -> qn.exists(e -> e.field(field)))))));
-                                boolQueryBuilder.must(rangeOrNullQuery.build()._toQuery());
-                            } else {
-                                nestedMap.forEach((nestedField, nestedValue) -> {
-                                    String fullPath = field + "." + nestedField;
-                                    if (nestedValue instanceof Boolean) {
-                                        boolQueryBuilder.must(Query.of(q -> q.term(t -> t.field(fullPath).value((Boolean) nestedValue))));
-                                    } else if (nestedValue instanceof String) {
-                                        List<FieldValue> termList = Collections.singletonList(FieldValue.of((String) nestedValue));
-                                        boolQueryBuilder.must(Query.of(q -> q.terms(t -> t.field(fullPath + Constants.KEYWORD).terms((TermsQueryField) termList))));
-                                    } else if (nestedValue instanceof ArrayList) {
-                                        boolQueryBuilder.must(Query.of(q -> q.terms(t -> t.field(fullPath + Constants.KEYWORD).terms((TermsQueryField) nestedValue))));
-                                    }
-                                });
-                            }
-                        }
-                    });
-            mustNotQueries.forEach(mustNotQuery -> boolQueryBuilder.mustNot(mustNotQuery));
-            boolQueries.forEach(boolQuery -> boolQueryBuilder.must(boolQuery));
+            filterCriteriaMap.forEach((field, value) ->
+                    applyFilterCondition(boolQueryBuilder, mustNotQueries, boolQueries, field, value));
+            mustNotQueries.forEach(boolQueryBuilder::mustNot);
+            boolQueries.forEach(boolQueryBuilder::must);
         }
         return boolQueryBuilder;
+    }
+
+    private void applyFilterCondition(BoolQuery.Builder boolQueryBuilder, List<Query> mustNotQueries,
+                                       List<Query> boolQueries, String field, Object value) {
+        if (field.equals("must_not") && value instanceof ArrayList) {
+            mustNotQueries.add(Query.of(q -> q.termsSet(t -> t.field(field).terms((ArrayList<String>) value))));
+        } else if (value instanceof Boolean) {
+            boolQueries.add(Query.of(q -> q.term(t -> t.field(field).value((boolean) value))));
+        } else if (value instanceof List<?>) {
+            addListTermsQuery(boolQueryBuilder, field, (List<?>) value);
+        } else if (value instanceof String stringValue) {
+            boolQueryBuilder.must(Query.of(q -> q.terms(t ->
+                    t.field(field + Constants.KEYWORD)
+                            .terms(terms -> terms.value(List.of(FieldValue.of(stringValue))))
+            )));
+        } else if (value instanceof Set) {
+            addSetTermsQuery(boolQueryBuilder, field, (Set<String>) value);
+        } else if (value instanceof Map) {
+            applyNestedMapCondition(boolQueryBuilder, field, (Map<String, Object>) value);
+        }
+    }
+
+    private void addListTermsQuery(BoolQuery.Builder boolQueryBuilder, String field, List<?> value) {
+        List<FieldValue> termsList = value.stream()
+                .map(v -> FieldValue.of(v.toString()))
+                .toList();
+        if (cbExtServerProperties.getNonTextFields().contains(field)) {
+            boolQueryBuilder.must(Query.of(q -> q.terms(t -> t.field(field).terms(terms -> terms.value(termsList)))));
+        } else {
+            boolQueryBuilder.must(Query.of(q -> q.terms(t -> t.field(field + Constants.KEYWORD).terms(terms -> terms.value(termsList)))));
+        }
+    }
+
+    private void addSetTermsQuery(BoolQuery.Builder boolQueryBuilder, String field, Set<String> termsSet) {
+        List<FieldValue> termsList = termsSet.stream()
+                .map(FieldValue::of)
+                .toList();
+        boolQueryBuilder.must(Query.of(q -> q.terms(t -> t.field(field + Constants.KEYWORD).terms(terms -> terms.value(termsList)))));
+    }
+
+    private void applyNestedMapCondition(BoolQuery.Builder boolQueryBuilder, String field, Map<String, Object> nestedMap) {
+        if (isRangeQuery(nestedMap)) {
+            applyRangeOrNullQuery(boolQueryBuilder, field, nestedMap);
+        } else {
+            nestedMap.forEach((nestedField, nestedValue) ->
+                    applyNestedFieldCondition(boolQueryBuilder, field, nestedField, nestedValue));
+        }
+    }
+
+    private void applyRangeOrNullQuery(BoolQuery.Builder boolQueryBuilder, String field, Map<String, Object> nestedMap) {
+        BoolQuery.Builder rangeOrNullQuery = QueryBuilders.bool();
+        RangeQuery.Builder rangeQuery = QueryBuilders.range().field(field);
+        nestedMap.forEach((rangeOperator, rangeValue) -> {
+            switch (rangeOperator) {
+                case Constants.SEARCH_OPERATION_GREATER_THAN_EQUALS:
+                    rangeQuery.gte(JsonData.of(rangeValue));
+                    break;
+                case Constants.SEARCH_OPERATION_LESS_THAN_EQUALS:
+                    rangeQuery.lte(JsonData.of(rangeValue));
+                    break;
+                case Constants.SEARCH_OPERATION_GREATER_THAN:
+                    rangeQuery.gt(JsonData.of(rangeValue));
+                    break;
+                case Constants.SEARCH_OPERATION_LESS_THAN:
+                    rangeQuery.lt(JsonData.of(rangeValue));
+                    break;
+                default:
+                    break;
+            }
+        });
+        rangeOrNullQuery.should(rangeQuery.build()._toQuery());
+        rangeOrNullQuery.should(Query.of(q -> q.bool(b -> b.mustNot(Query.of(qn -> qn.exists(e -> e.field(field)))))));
+        boolQueryBuilder.must(rangeOrNullQuery.build()._toQuery());
+    }
+
+    private void applyNestedFieldCondition(BoolQuery.Builder boolQueryBuilder, String field, String nestedField, Object nestedValue) {
+        String fullPath = field + "." + nestedField;
+        if (nestedValue instanceof Boolean booleanValue) {
+            boolQueryBuilder.must(Query.of(q -> q.term(t -> t.field(fullPath).value(booleanValue))));
+        } else if (nestedValue instanceof String stringValue) {
+            List<FieldValue> termList = Collections.singletonList(FieldValue.of(stringValue));
+            boolQueryBuilder.must(Query.of(q -> q.terms(t -> t.field(fullPath + Constants.KEYWORD).terms((TermsQueryField) termList))));
+        } else if (nestedValue instanceof ArrayList) {
+            boolQueryBuilder.must(Query.of(q -> q.terms(t -> t.field(fullPath + Constants.KEYWORD).terms((TermsQueryField) nestedValue))));
+        }
     }
 
     private boolean isRangeQuery(Map<String, Object> nestedMap) {

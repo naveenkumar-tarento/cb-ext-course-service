@@ -1,10 +1,8 @@
 package com.igot.cb.consentacknowledge;
 
 import com.igot.cb.model.ApiResponse;
-import com.igot.cb.util.Constants;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;

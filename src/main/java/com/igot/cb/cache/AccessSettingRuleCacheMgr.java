@@ -34,9 +34,9 @@ public class AccessSettingRuleCacheMgr {
     private Cache<String, CachedAccessSettingRule> accessSettingsCache;
 
 
-    private final long LOCAL_CACHE_TTL = 3600000;
+    private static final long LOCAL_CACHE_TTL = 3600000;
 
-    private final String ACCESS_SETTINGS_CACHE_KEY = "accessSettingRules";
+    private static final String ACCESS_SETTINGS_CACHE_KEY = "accessSettingRules";
 
     @Value("${access.rule.ttl.minutes}")
     private int ttlMinutes;
@@ -125,13 +125,13 @@ public class AccessSettingRuleCacheMgr {
                         null,
                         accessSettingsCacheBatchSize,
                         null,
-                        record -> {
+                        recordMap -> {
                             try {
                                 CachedAccessSettingRule rule = new CachedAccessSettingRule(
-                                        (String) record.get("contextId"),
-                                        (String) record.get("contextIdType"),
-                                        (String) record.get("contextData"),
-                                        Boolean.TRUE.equals(record.get("isArchived")));
+                                        (String) recordMap.get("contextId"),
+                                        (String) recordMap.get("contextIdType"),
+                                        (String) recordMap.get("contextData"),
+                                        Boolean.TRUE.equals(recordMap.get("isArchived")));
                                 Map<String, Object> contextData = rule.getContextData();
                                 if (contextData == null) {
                                     log.warn("No contextData found for rule: {}", rule.getCacheKey());
@@ -145,7 +145,7 @@ public class AccessSettingRuleCacheMgr {
                                         contextData);
                                 processedCount.incrementAndGet();
                             } catch (Exception e) {
-                                log.error("Error processing access setting rule record: {}", record, e);
+                                log.error("Error processing access setting rule record: {}", recordMap, e);
                             }
                         });
                 log.info("Processed {} access setting rules from Cassandra in paged mode", processedCount.get());
@@ -175,53 +175,64 @@ public class AccessSettingRuleCacheMgr {
         }
 
         for (Map<String, Object> userGroup : userGroups) {
-            String userGroupId = (String) userGroup.get(Constants.USER_GROUP_ID);
-            String userGroupName = (String) userGroup.get(Constants.USER_GROUP_NAME);
+            processUserGroup(cacheKey, userGroup);
+        }
+    }
 
-            List<Map<String, Object>> criteriaList =
-                    (List<Map<String, Object>>) userGroup.get(Constants.USER_GROUP_CRITERIA_LIST);
-            if (criteriaList == null || criteriaList.isEmpty()) {
-                log.warn("No userGroupCriteriaList for userGroupId {} in rule {}", userGroupId, cacheKey);
-                continue;
+    @SuppressWarnings("unchecked")
+    private void processUserGroup(String cacheKey, Map<String, Object> userGroup) {
+        String userGroupId = (String) userGroup.get(Constants.USER_GROUP_ID);
+        String userGroupName = (String) userGroup.get(Constants.USER_GROUP_NAME);
+
+        List<Map<String, Object>> criteriaList =
+                (List<Map<String, Object>>) userGroup.get(Constants.USER_GROUP_CRITERIA_LIST);
+        if (criteriaList == null || criteriaList.isEmpty()) {
+            log.warn("No userGroupCriteriaList for userGroupId {} in rule {}", userGroupId, cacheKey);
+            return;
+        }
+
+        for (Map<String, Object> criteria : criteriaList) {
+            processCriteria(cacheKey, userGroupId, userGroupName, criteria);
+        }
+    }
+
+    private void processCriteria(String cacheKey, String userGroupId, String userGroupName, Map<String, Object> criteria) {
+        String criteriaKey = (String) criteria.get(Constants.CRITERIA_KEY);
+        List<?> criteriaValues = (List<?>) criteria.get(Constants.CRITERIA_VALUE);
+
+        if (criteriaKey == null || criteriaValues == null) {
+            log.warn("Missing key or values in criteria for userGroupId {} in rule {}", userGroupId, cacheKey);
+            return;
+        }
+
+        log.info("Rule {} -> UserGroup {} ({}) -> CriteriaKey {} -> Values {}",
+                cacheKey, userGroupName, userGroupId, criteriaKey, criteriaValues);
+
+        // Convert the List<?> to a List<Integer>
+        List<Integer> intValues = criteriaValues.stream()
+                .map(Object::toString)
+                .map(val -> parseCriteriaValue(val, criteriaKey, cacheKey))
+                .filter(Objects::nonNull)
+                .toList();
+
+        // Convert to BitSet and update the input object
+        BitSet bitSet = createBitSetForAttribute(intValues);
+        criteria.put(Constants.CRITERIA_VALUE, bitSet);
+        // Save to in-memory cache or use as needed
+    }
+
+    private Integer parseCriteriaValue(String val, String criteriaKey, String cacheKey) {
+        try {
+            int parsedVal = Integer.parseInt(val);
+            if (parsedVal < 0 || parsedVal > Constants.MAX_BITSET_INDEX) {
+                log.warn("Criteria value '{}' for key {} in rule {} is out of valid BitSet range [0, {}] - skipping to avoid heap exhaustion",
+                        val, criteriaKey, cacheKey, Constants.MAX_BITSET_INDEX);
+                return null;
             }
-
-            for (Map<String, Object> criteria : criteriaList) {
-                String criteriaKey = (String) criteria.get(Constants.CRITERIA_KEY);
-                List<?> criteriaValues = (List<?>) criteria.get(Constants.CRITERIA_VALUE);
-
-                if (criteriaKey == null || criteriaValues == null) {
-                    log.warn("Missing key or values in criteria for userGroupId {} in rule {}", userGroupId, cacheKey);
-                    continue;
-                }
-
-                log.info("Rule {} -> UserGroup {} ({}) -> CriteriaKey {} -> Values {}",
-                        cacheKey, userGroupName, userGroupId, criteriaKey, criteriaValues);
-
-                // Convert the List<?> to a List<Integer>
-                List<Integer> intValues = criteriaValues.stream()
-                        .map(Object::toString)
-                        .map(val -> {
-                            try {
-                                int parsedVal = Integer.parseInt(val);
-                                if (parsedVal < 0 || parsedVal > Constants.MAX_BITSET_INDEX) {
-                                    log.warn("Criteria value '{}' for key {} in rule {} is out of valid BitSet range [0, {}] - skipping to avoid heap exhaustion",
-                                            val, criteriaKey, cacheKey, Constants.MAX_BITSET_INDEX);
-                                    return null;
-                                }
-                                return parsedVal;
-                            } catch (NumberFormatException e) {
-                                log.warn("Non-integer criteria value '{}' for key {} in rule {}", val, criteriaKey, cacheKey);
-                                return null;
-                            }
-                        })
-                        .filter(Objects::nonNull)
-                        .collect(Collectors.toList());
-
-                // Convert to BitSet and update the input object
-                BitSet bitSet = createBitSetForAttribute(intValues);
-                criteria.put(Constants.CRITERIA_VALUE, bitSet);
-                // Save to in-memory cache or use as needed
-            }
+            return parsedVal;
+        } catch (NumberFormatException e) {
+            log.warn("Non-integer criteria value '{}' for key {} in rule {}", val, criteriaKey, cacheKey);
+            return null;
         }
     }
 
@@ -239,7 +250,7 @@ public class AccessSettingRuleCacheMgr {
             }
             try {
                 bitSet.set(part);
-            } catch (Throwable ex) {
+            } catch (Exception ex) {
                 log.error("Failed to set the bit map position for value: {}", part, ex);
             }
         }
@@ -277,20 +288,24 @@ public class AccessSettingRuleCacheMgr {
                     (String) r.get(Constants.CONTEXT_DATA_KEY),
                     false
             );
-            try {
-                Map<String, Object> contextData = loadedRule.getContextData();
-                if (MapUtils.isNotEmpty(contextData)) {
-                    processContextData(cacheKey, contextData);
-                }
-                accessSettingsCache.put(cacheKey, loadedRule);
-                log.info("Loaded and cached rule for key: {}", cacheKey);
-            } catch (Exception e) {
-                log.error("Error processing rule {}: {}", cacheKey, e.getMessage(), e);
-            }
+            cacheLoadedRule(cacheKey, loadedRule);
             return loadedRule;
         } catch (Exception e) {
             log.error("Failed to load rule from Cassandra for key {}: {}", cacheKey, e.getMessage(), e);
             return null;
+        }
+    }
+
+    private void cacheLoadedRule(String cacheKey, CachedAccessSettingRule loadedRule) {
+        try {
+            Map<String, Object> contextData = loadedRule.getContextData();
+            if (MapUtils.isNotEmpty(contextData)) {
+                processContextData(cacheKey, contextData);
+            }
+            accessSettingsCache.put(cacheKey, loadedRule);
+            log.info("Loaded and cached rule for key: {}", cacheKey);
+        } catch (Exception e) {
+            log.error("Error processing rule {}: {}", cacheKey, e.getMessage(), e);
         }
     }
 

@@ -5,7 +5,7 @@ import java.nio.ByteBuffer;
 
 public abstract class CharacterDecoder {
 
-    public CharacterDecoder() {}
+    protected CharacterDecoder() {}
     /** Return the number of bytes per atom of decoding */
     protected abstract int bytesPerAtom();
 
@@ -49,7 +49,7 @@ public abstract class CharacterDecoder {
     }
 
     /** This method works around the bizarre semantics of BufferedInputStream's read method. */
-    protected int readFully(InputStream in, byte buffer[], int offset, int len)
+    protected int readFully(InputStream in, byte[] buffer, int offset, int len)
             throws java.io.IOException {
         for (int i = 0; i < len; i++) {
             int q = in.read();
@@ -83,7 +83,8 @@ public abstract class CharacterDecoder {
         // Put the byte back since we just peeked
         ps.unread(firstByte);
         
-        while (true) {
+        boolean continueDecoding = true;
+        while (continueDecoding) {
             int length;
 
             try {
@@ -104,7 +105,7 @@ public abstract class CharacterDecoder {
                 if (totalBytes == 0) {
                     throw e;
                 }
-                break;
+                continueDecoding = false;
             }
         }
         decodeBufferSuffix(ps, bStream);
@@ -116,8 +117,8 @@ public abstract class CharacterDecoder {
      *
      * @exception IOException An error has occurred while decoding
      */
-    public byte decodeBuffer(String inputString)[] throws IOException {
-        byte inputBuffer[] = new byte[inputString.length()];
+    public byte[] decodeBuffer(String inputString) throws IOException {
+        byte[] inputBuffer = new byte[inputString.length()];
         ByteArrayInputStream inStream;
         ByteArrayOutputStream outStream;
 
@@ -129,7 +130,7 @@ public abstract class CharacterDecoder {
     }
 
     /** Decode the contents of the inputstream into a buffer. */
-    public byte decodeBuffer(InputStream in)[] throws IOException {
+    public byte[] decodeBuffer(InputStream in) throws IOException {
         ByteArrayOutputStream outStream = new ByteArrayOutputStream();
         decodeBuffer(in, outStream);
         return (outStream.toByteArray());

@@ -86,7 +86,7 @@ class ExternalTrainingBulkUploadConsumerTest {
     }
 
     @Test
-    void testValidateNotNullOrEmpty_valid() throws Exception {
+    void testValidateNotNullOrEmpty_valid() {
         Map<String, Object> map = Map.of("key", "value");
 
         assertDoesNotThrow(() ->
@@ -167,10 +167,10 @@ class ExternalTrainingBulkUploadConsumerTest {
     @Test
     void testProcessRecord_successFlow() throws Exception {
 
-        CSVRecord record = mock(CSVRecord.class);
-        when(record.size()).thenReturn(1);
-        when(record.get("Email")).thenReturn("test@mail.com");
-        when(record.toMap()).thenReturn(new HashMap<>());
+        CSVRecord csvRecord = mock(CSVRecord.class);
+        when(csvRecord.size()).thenReturn(1);
+        when(csvRecord.get("Email")).thenReturn("test@mail.com");
+        when(csvRecord.toMap()).thenReturn(new HashMap<>());
 
         Map<String, Object> userInfo = Map.of(Constants.USER_ID, "user1");
         Map<String, Object> emailMap = Map.of("test@mail.com", userInfo);
@@ -197,7 +197,7 @@ class ExternalTrainingBulkUploadConsumerTest {
         Map<String, String> result = (Map<String, String>) invokePrivate(
                 "processRecord",
                 new Class[]{CSVRecord.class, int.class, String.class, String.class, Map.class, Map.class, List.class},
-                record, 5, "event", "batch", emailMap, eventDetails, notifications
+                csvRecord, 5, "event", "batch", emailMap, eventDetails, notifications
         );
 
         assertFalse(result.containsKey("Status"));
@@ -207,15 +207,15 @@ class ExternalTrainingBulkUploadConsumerTest {
     @Test
     void testProcessRecord_invalidEmail() throws Exception {
 
-        CSVRecord record = mock(CSVRecord.class);
-        when(record.get("Email")).thenReturn("invalid");
-        when(record.toMap()).thenReturn(new HashMap<>());
-        when(record.size()).thenReturn(1);
+        CSVRecord csvRecord = mock(CSVRecord.class);
+        when(csvRecord.get("Email")).thenReturn("invalid");
+        when(csvRecord.toMap()).thenReturn(new HashMap<>());
+        when(csvRecord.size()).thenReturn(1);
 
         Map<String, String> result = (Map<String, String>) invokePrivate(
                 "processRecord",
                 new Class[]{CSVRecord.class, int.class, String.class, String.class, Map.class, Map.class, List.class},
-                record, 5, "event", "batch", new HashMap<>(), new HashMap<>(), new ArrayList<>()
+                csvRecord, 5, "event", "batch", new HashMap<>(), new HashMap<>(), new ArrayList<>()
         );
 
         assertEquals("FAILED", result.get("Status"));

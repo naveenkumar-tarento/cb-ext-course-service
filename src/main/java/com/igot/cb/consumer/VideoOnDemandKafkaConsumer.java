@@ -10,7 +10,6 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
@@ -22,14 +21,18 @@ import java.util.concurrent.CompletableFuture;
 public class VideoOnDemandKafkaConsumer {
     private static final Logger logger = LoggerFactory.getLogger(VideoOnDemandKafkaConsumer.class);
 
-    @Autowired
-    private ObjectMapper mapper;
+    private final ObjectMapper mapper;
 
-    @Autowired
-    private ServerProperties serverProperties;
+    private final ServerProperties serverProperties;
 
-    @Autowired
-    private OutboundRequestHandlerServiceImpl outboundRequestHandlerService;
+    private final OutboundRequestHandlerServiceImpl outboundRequestHandlerService;
+
+    public VideoOnDemandKafkaConsumer(ObjectMapper mapper, ServerProperties serverProperties,
+                                       OutboundRequestHandlerServiceImpl outboundRequestHandlerService) {
+        this.mapper = mapper;
+        this.serverProperties = serverProperties;
+        this.outboundRequestHandlerService = outboundRequestHandlerService;
+    }
 
     @KafkaListener(topics = "${spring.kafka.content.metadata.update.topic.name}", groupId = "${spring.kafka.content.metadata.update.consumer.group.id}")
     public void contentMetadataUpdateConsumerForVOD(ConsumerRecord<String, String> data) {

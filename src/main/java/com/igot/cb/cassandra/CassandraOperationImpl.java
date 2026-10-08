@@ -18,7 +18,6 @@ import lombok.extern.slf4j.Slf4j;
 
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.collections.MapUtils;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -34,8 +33,11 @@ import java.util.stream.Collectors;
 @Component
 @Slf4j
 public class CassandraOperationImpl implements CassandraOperation {
-    @Autowired
-    CassandraConnectionManager connectionManager;
+    private final CassandraConnectionManager connectionManager;
+
+    public CassandraOperationImpl(CassandraConnectionManager connectionManager) {
+        this.connectionManager = connectionManager;
+    }
 
     private com.datastax.oss.driver.api.querybuilder.select.Select processQuery(String keyspaceName, String tableName, Map<String, Object> propertyMap,
                                                                                 List<String> fields) {

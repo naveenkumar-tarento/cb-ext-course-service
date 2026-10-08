@@ -2,7 +2,6 @@ package com.igot.cb.cassandra;
 
 import org.junit.jupiter.api.Test;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 
@@ -51,18 +50,14 @@ class CassandraPropertyReaderTest {
     @Test
     void testLoadPropertiesFileNotFound() {
         // Test the scenario where properties file is not found
-        assertThrows(CassandraPropertyReaderException.class, () -> {
-            TestCassandraPropertyReader testReader = new TestCassandraPropertyReader();
-            testReader.testLoadPropertiesFileNotFound();
-        });
+        TestCassandraPropertyReader testReader = new TestCassandraPropertyReader();
+        assertThrows(CassandraPropertyReaderException.class, testReader::testLoadPropertiesFileNotFound);
     }
 
     @Test
     void testLoadPropertiesIOException() {
-        assertThrows(CassandraPropertyReaderException.class, () -> {
-            TestCassandraPropertyReader testReader = new TestCassandraPropertyReader();
-            testReader.testLoadPropertiesIOException();
-        });
+        TestCassandraPropertyReader testReader = new TestCassandraPropertyReader();
+        assertThrows(CassandraPropertyReaderException.class, testReader::testLoadPropertiesIOException);
     }
 
     // Helper class to test exception scenarios

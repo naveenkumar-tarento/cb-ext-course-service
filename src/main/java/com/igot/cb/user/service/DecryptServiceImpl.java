@@ -19,11 +19,9 @@ import java.nio.charset.StandardCharsets;
 @Slf4j
 public class DecryptServiceImpl {
 
-    private static String sunbird_encryption = "";
-
     private Logger logger = LoggerFactory.getLogger(getClass().getName());
 
-    private int ITERATIONS = 3;
+    private int iterations = 3;
 
     private Cipher decryptCipher;
 
@@ -50,7 +48,7 @@ public class DecryptServiceImpl {
         try {
             String dValue = null;
             String valueToDecrypt = encStr.trim();
-            for (int i = 0; i < ITERATIONS; i++) {
+            for (int i = 0; i < iterations; i++) {
                 byte[] decodedValue = new BASE64Decoder().decodeBuffer(valueToDecrypt);
                 byte[] decValue = decryptCipher.doFinal(decodedValue);
                 dValue = new String(decValue, StandardCharsets.UTF_8).substring(sbChiperPassword.length());

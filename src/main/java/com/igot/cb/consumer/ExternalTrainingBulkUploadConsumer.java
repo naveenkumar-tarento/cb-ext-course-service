@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.igot.cb.cassandra.CassandraOperation;
+import com.igot.cb.cassandra.exceptions.CustomException;
 import com.igot.cb.model.ApiResponse;
 import com.igot.cb.service.ContentInfoServiceImpl;
 import com.igot.cb.service.NotificationService;
@@ -42,6 +43,9 @@ public class ExternalTrainingBulkUploadConsumer {
 
     private final Logger logger = LoggerFactory.getLogger(ExternalTrainingBulkUploadConsumer.class);
 
+    private static final String STATUS_COLUMN = "Status";
+    private static final String ERROR_DETAILS_COLUMN = "Error Details";
+
     ObjectMapper objectMapper = new ObjectMapper();
 
     @Autowired
@@ -57,7 +61,7 @@ public class ExternalTrainingBulkUploadConsumer {
     OutboundRequestHandlerServiceImpl outboundRequestHandlerService;
 
     @Autowired
-    private KafkaTemplate kafkaTemplate;
+    private KafkaTemplate<String, String> kafkaTemplate;
 
     @Autowired
     private ExternalTrainingCertificateServiceImpl externalTrainingCertificateService;
@@ -76,14 +80,14 @@ public class ExternalTrainingBulkUploadConsumer {
     public void processExternalTrainingBulkUploadMessage(ConsumerRecord<String, String> data) {
         logger.info(
                 "ExternalTrainingBulkUploadConsumer::processMessage: Received event to initiate Public user event Bulk Upload Process...");
-        logger.info("Received message:: " + data.value());
+        logger.info("Received message:: {}", data.value());
         try {
             if (StringUtils.isNoneBlank(data.value())) {
                 CompletableFuture.runAsync(() -> {
                     try {
                         initiateExternalTrainingBulkUploadProcess(data.value());
                     } catch (IOException e) {
-                        throw new RuntimeException(e);
+                        throw new CustomException(Constants.ERROR, e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
                     }
                 });
             } else {
@@ -111,16 +115,15 @@ public class ExternalTrainingBulkUploadConsumer {
             storageService.downloadFile(fileName, serverProperties.getExternalTrainingBulkUploadContainerName());
             processExternalTrainingBulkUpload(inputDataMap);
         } else {
-            logger.error(String.format("Error in the Kafka Message Received : %s", errList));
+            logger.error("Error in the Kafka Message Received : {}", errList);
         }
         long endTime = System.currentTimeMillis();
         long totalTime = endTime - startTime;
-        logger.info("Total time taken to process External Training Bulk Upload : " + totalTime);
+        logger.info("Total time taken to process External Training Bulk Upload : {}", totalTime);
 
     }
 
     private void processExternalTrainingBulkUpload(Map<String, String> inputData) throws IOException {
-        String orgId = inputData.get(Constants.ORD_ID);
         String eventId = inputData.get(Constants.CONTEXT_ID_KEY);
         String batchId = inputData.get(Constants.BATCH_ID);
         String status = "";
@@ -144,13 +147,13 @@ public class ExternalTrainingBulkUploadConsumer {
         List<String> headers;
 
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(file), StandardCharsets.UTF_8));
-             CSVParser csvParser = new CSVParser(reader, CSVFormat.newFormat(serverProperties.getBulkUploadCsvDelimiter()).withFirstRecordAsHeader())) {
+             CSVParser csvParser = new CSVParser(reader, CSVFormat.newFormat(serverProperties.getBulkUploadCsvDelimiter()).builder().setHeader().setSkipHeaderRecord(true).build())) {
 
             headers = new ArrayList<>(csvParser.getHeaderNames());
             cleanHeaders(headers);
 
-            if (!headers.contains("Status")) headers.add("Status");
-            if (!headers.contains("Error Details")) headers.add("Error Details");
+            if (!headers.contains(STATUS_COLUMN)) headers.add(STATUS_COLUMN);
+            if (!headers.contains(ERROR_DETAILS_COLUMN)) headers.add(ERROR_DETAILS_COLUMN);
 
             int expectedFieldCount = headers.size() - 2; // Exclude "Status" and "Error Details"
 
@@ -159,15 +162,15 @@ public class ExternalTrainingBulkUploadConsumer {
 
             try (CSVParser csvParser2 = new CSVParser(
                     new BufferedReader(new InputStreamReader(new FileInputStream(file), StandardCharsets.UTF_8)),
-                    CSVFormat.newFormat(serverProperties.getBulkUploadCsvDelimiter()).withFirstRecordAsHeader()
+                    CSVFormat.newFormat(serverProperties.getBulkUploadCsvDelimiter()).builder().setHeader().setSkipHeaderRecord(true).build()
             )) {
                 List<String> notificationUserIds = new ArrayList<>();
-                for (CSVRecord record : csvParser2.getRecords()) {
+                for (CSVRecord csvRecord : csvParser2.getRecords()) {
                     totalRecordsCount++;
 
-                    Map<String, String> updatedRecord = processRecord(record, expectedFieldCount, eventId, batchId, emailUserIdMap, eventDetails, notificationUserIds);
+                    Map<String, String> updatedRecord = processRecord(csvRecord, expectedFieldCount, eventId, batchId, emailUserIdMap, eventDetails, notificationUserIds);
                     updatedRecords.add(updatedRecord);
-                    if ("FAILED".equalsIgnoreCase(updatedRecord.get("Status"))) {
+                    if ("FAILED".equalsIgnoreCase(updatedRecord.get(STATUS_COLUMN))) {
                         failedCount++;
                     } else {
                         processedCount++;
@@ -200,14 +203,14 @@ public class ExternalTrainingBulkUploadConsumer {
 
         List<String> emailList = new ArrayList<>();
         try {
-            for (CSVRecord record : csvParser) {
+            for (CSVRecord csvRecord : csvParser) {
                 // Validate if the record contains the required column
-                if (record.isMapped(columnName)) {
-                    String columnValue = record.get(columnName);
+                if (csvRecord.isMapped(columnName)) {
+                    String columnValue = csvRecord.get(columnName);
                     if (StringUtils.isNotBlank(columnValue)) {
                         emailList.add(columnValue.toLowerCase().trim());
                     } else {
-                        logger.warn("Skipping empty value for column {} in record {}", columnName, record.getRecordNumber());
+                        logger.warn("Skipping empty value for column {} in record {}", columnName, csvRecord.getRecordNumber());
                     }
                 } else {
                     logger.error("Column '{}' not found in CSV file.", columnName);
@@ -223,7 +226,6 @@ public class ExternalTrainingBulkUploadConsumer {
                 logger.warn("No valid email addresses found in the CSV.");
             }
         } catch (Exception e) {
-            logger.error("Error processing CSV file to fetch user IDs", e);
             throw new IOException("Failed to process CSV file", e);
         }
     }
@@ -233,26 +235,26 @@ public class ExternalTrainingBulkUploadConsumer {
      * Cleans up the headers by removing any surrounding quotes.
      */
     private void cleanHeaders(List<String> headers) {
-        headers.replaceAll(header -> header.replaceAll("^\"|\"$", ""));
+        headers.replaceAll(header -> header.replaceAll("(^\")|(\"$)", ""));
     }
 
     /**
      * Processes a single CSV record. Returns the updated record with status and error details.
      */
-    private Map<String, String> processRecord(CSVRecord record, int expectedFieldCount, String eventId, String batchId, Map<String, Object> emailUserMap, Map<String, Object> eventDetails, List<String> notificationUserIds) {
-        Map<String, String> updatedRecord = new LinkedHashMap<>(record.toMap());
+    private Map<String, String> processRecord(CSVRecord csvRecord, int expectedFieldCount, String eventId, String batchId, Map<String, Object> emailUserMap, Map<String, Object> eventDetails, List<String> notificationUserIds) {
+        Map<String, String> updatedRecord = new LinkedHashMap<>(csvRecord.toMap());
         try {
-            if (record.size() > expectedFieldCount) {
+            if (csvRecord.size() > expectedFieldCount) {
                 markRecordAsFailed(updatedRecord, "Number of fields in the record exceeds expected number. Please check your data.");
                 return updatedRecord;
             }
 
-            String email = record.get("Email");
+            String email = csvRecord.get("Email");
             if (StringUtils.isBlank(email)) {
                 markRecordAsFailed(updatedRecord, "Empty email");
                 return updatedRecord;
             }
-            if (!ProjectUtil.validateEmailPattern(email)) {
+            if (!Boolean.TRUE.equals(ProjectUtil.validateEmailPattern(email))) {
                 markRecordAsFailed(updatedRecord, "Invalid Email Id");
                 return updatedRecord;
             }
@@ -267,7 +269,7 @@ public class ExternalTrainingBulkUploadConsumer {
             validateNotNullOrEmpty(userInfo);
             String userId = userInfo.get(Constants.USER_ID).toString();
 
-            Map<String, Object> enrollmentRecord = isEventEnrolmentExist(userId, eventId, batchId);
+            Map<String, Object> enrollmentRecord = isEventEnrolmentExist(userId, eventId);
             if (MapUtils.isNotEmpty(enrollmentRecord)) {
                 markRecordAsFailed(updatedRecord, "User enrolled in the batch");
                 return updatedRecord;
@@ -289,16 +291,16 @@ public class ExternalTrainingBulkUploadConsumer {
 
         } catch (IllegalArgumentException e) {
             // Validation errors
-            logger.warn("Validation failed for record: {}, error: {}", record, e.getMessage());
+            logger.warn("Validation failed for record: {}, error: {}", csvRecord, e.getMessage());
             markRecordAsFailed(updatedRecord, e.getMessage());
 
         } catch (JsonProcessingException e) {
-            logger.error("JSON processing error for record: {}", record, e);
+            logger.error("JSON processing error for record: {}", csvRecord, e);
             markRecordAsFailed(updatedRecord, "Error processing JSON data");
 
         } catch (Exception e) {
             // Catch-all to avoid breaking batch processing
-            logger.error("Unexpected error while processing record: {}", record, e);
+            logger.error("Unexpected error while processing record: {}", csvRecord, e);
             markRecordAsFailed(updatedRecord, "Internal error while processing record");
         }
 
@@ -308,9 +310,9 @@ public class ExternalTrainingBulkUploadConsumer {
     /**
      * Marks a record as failed with an error message.
      */
-    private void markRecordAsFailed(Map<String, String> record, String errorMessage) {
-        record.put("Status", "FAILED");
-        record.put("Error Details", errorMessage);
+    private void markRecordAsFailed(Map<String, String> recordMap, String errorMessage) {
+        recordMap.put(STATUS_COLUMN, "FAILED");
+        recordMap.put(ERROR_DETAILS_COLUMN, errorMessage);
     }
 
     /**
@@ -320,11 +322,13 @@ public class ExternalTrainingBulkUploadConsumer {
         try (FileWriter fileWriter = new FileWriter(file);
              BufferedWriter bufferedWriter = new BufferedWriter(fileWriter);
              CSVPrinter csvPrinter = new CSVPrinter(bufferedWriter, CSVFormat.newFormat(serverProperties.getBulkUploadCsvDelimiter())
-                     .withHeader(headers.toArray(new String[0]))
-                     .withRecordSeparator(System.lineSeparator()))) {
+                     .builder()
+                     .setHeader(headers.toArray(new String[0]))
+                     .setRecordSeparator(System.lineSeparator())
+                     .build())) {
 
-            for (Map<String, String> record : updatedRecords) {
-                csvPrinter.printRecord(record.values());
+            for (Map<String, String> recordMap : updatedRecords) {
+                csvPrinter.printRecord(recordMap.values());
             }
         }
     }
@@ -351,7 +355,6 @@ public class ExternalTrainingBulkUploadConsumer {
     private Map<String, Object> getUserInfo(String key, List<String> values) {
         int batchSize = 100;
         Map<String, Object> requestBody = new HashMap<>();
-        List<Map<String, Object>> contentList = new ArrayList<>();
         Map<String, Object> reqMap = new HashMap<>();
 
         Map<String, Object> emailUserMap = new HashMap<>();
@@ -362,47 +365,50 @@ public class ExternalTrainingBulkUploadConsumer {
         for (int i = 0; i < values.size(); i += batchSize) {
             int end = Math.min(i + batchSize, values.size());
             List<String> subList = values.subList(i, end);
-            reqMap.put(Constants.FILTERS, new HashMap<String, Object>() {
-                {
-                    put(key, subList);
-                }
-            });
+            Map<String, Object> filterMap = new HashMap<>();
+            filterMap.put(key, subList);
+            reqMap.put(Constants.FILTERS, filterMap);
             requestBody.put(Constants.REQUEST, reqMap);
 
             try {
                 Map<String, Object> response = outboundRequestHandlerService.fetchResultUsingPost(url, requestBody,
                         headersValue);
-                if (response != null && Constants.OK.equalsIgnoreCase((String) response.get(Constants.RESPONSE_CODE))) {
-                    Map<String, Object> map = (Map<String, Object>) response.get(Constants.RESULT);
-                    if (map.get(Constants.RESPONSE) != null) {
-                        Map<String, Object> responseObj = (Map<String, Object>) map.get(Constants.RESPONSE);
-                        contentList = (List<Map<String, Object>>) responseObj.get(Constants.CONTENT);
-                        if (contentList != null) {
-                            contentList.forEach(e -> {
-                                Map<String, Object> profileDetails = (Map<String, Object>) e.get(Constants.PROFILE_DETAILS);
-                                Map<String, Object> userInfo = new HashMap<>();
-                                userInfo.put(Constants.ROOT_ORG_ID, e.get(Constants.ROOT_ORG_ID));
-                                userInfo.put(Constants.FIRSTNAME, e.get(Constants.FIRSTNAME));
-                                userInfo.put(Constants.USER_ID, e.get(Constants.USER_ID));
-                                if (profileDetails != null) {
-                                    Map<String, Object> personalDetails = (Map<String, Object>) profileDetails.get(Constants.PERSONAL_DETAILS);
-                                    if (personalDetails != null) {
-                                        String primaryEmail = (String) personalDetails.get(Constants.PRIMARY_EMAIL);
-                                        if (primaryEmail != null && !primaryEmail.trim().isEmpty()) {
-                                            emailUserMap.put(primaryEmail.toLowerCase().trim(), userInfo);
-                                        }
-                                    }
-                                }
-                            });
-
-                        }
-                    }
-                }
+                populateEmailUserMapFromResponse(response, emailUserMap);
             } catch (Exception e) {
                 logger.error("Error while fetching user details of list of users ", e);
             }
         }
         return emailUserMap;
+    }
+
+    private void populateEmailUserMapFromResponse(Map<String, Object> response, Map<String, Object> emailUserMap) {
+        if (response != null && Constants.OK.equalsIgnoreCase((String) response.get(Constants.RESPONSE_CODE))) {
+            Map<String, Object> map = (Map<String, Object>) response.get(Constants.RESULT);
+            if (map.get(Constants.RESPONSE) != null) {
+                Map<String, Object> responseObj = (Map<String, Object>) map.get(Constants.RESPONSE);
+                List<Map<String, Object>> contentList = (List<Map<String, Object>>) responseObj.get(Constants.CONTENT);
+                if (contentList != null) {
+                    contentList.forEach(userRecord -> addUserInfoEntry(userRecord, emailUserMap));
+                }
+            }
+        }
+    }
+
+    private void addUserInfoEntry(Map<String, Object> userRecord, Map<String, Object> emailUserMap) {
+        Map<String, Object> profileDetails = (Map<String, Object>) userRecord.get(Constants.PROFILE_DETAILS);
+        Map<String, Object> userInfo = new HashMap<>();
+        userInfo.put(Constants.ROOT_ORG_ID, userRecord.get(Constants.ROOT_ORG_ID));
+        userInfo.put(Constants.FIRSTNAME, userRecord.get(Constants.FIRSTNAME));
+        userInfo.put(Constants.USER_ID, userRecord.get(Constants.USER_ID));
+        if (profileDetails != null) {
+            Map<String, Object> personalDetails = (Map<String, Object>) profileDetails.get(Constants.PERSONAL_DETAILS);
+            if (personalDetails != null) {
+                String primaryEmail = (String) personalDetails.get(Constants.PRIMARY_EMAIL);
+                if (primaryEmail != null && !primaryEmail.trim().isEmpty()) {
+                    emailUserMap.put(primaryEmail.toLowerCase().trim(), userInfo);
+                }
+            }
+        }
     }
 
     private ApiResponse enrollUser(String userId, String eventId, String batchId, Map<String, Object> eventDetails) throws JsonProcessingException {
@@ -417,16 +423,16 @@ public class ExternalTrainingBulkUploadConsumer {
 
             Instant startDate = null;
             Instant endDate = null;
-            if (startObj instanceof Instant) {
-                startDate = (Instant) startObj;
-            } else if (startObj instanceof Date) {
-                startDate = ((Date) startObj).toInstant();
+            if (startObj instanceof Instant instant) {
+                startDate = instant;
+            } else if (startObj instanceof Date date) {
+                startDate = date.toInstant();
             }
 
-            if (endObj instanceof Instant) {
-                endDate = (Instant) endObj;
-            } else if (endObj instanceof Date) {
-                endDate = ((Date) endObj).toInstant();
+            if (endObj instanceof Instant instant) {
+                endDate = instant;
+            } else if (endObj instanceof Date date) {
+                endDate = date.toInstant();
             }
 
             Map<String, Object> request = new HashMap<>();
@@ -449,7 +455,7 @@ public class ExternalTrainingBulkUploadConsumer {
             batchLookupInsertRequest.put(Constants.USER_ID, userId);
             batchLookupInsertRequest.put(Constants.BATCH_ID, batchId);
             batchLookupInsertRequest.put(Constants.ACTIVE, true);
-            ApiResponse batchLookupInsertResponse = (ApiResponse) cassandraOperation.insertRecord(Constants.KEYSPACE_SUNBIRD_COURSE, serverProperties.getExternalTrainingEnrolmentBatchLookupTableName(), batchLookupInsertRequest);
+            cassandraOperation.insertRecord(Constants.KEYSPACE_SUNBIRD_COURSE, serverProperties.getExternalTrainingEnrolmentBatchLookupTableName(), batchLookupInsertRequest);
 
         } catch (Exception e) {
             logger.error("Exception while enrolling user: userId = {}, eventId = {}, batchId = {}", userId, eventId, batchId, e);
@@ -460,7 +466,7 @@ public class ExternalTrainingBulkUploadConsumer {
         return response;
     }
 
-    private Map<String, Object> isEventEnrolmentExist(String userId, String eventId, String batchId) {
+    private Map<String, Object> isEventEnrolmentExist(String userId, String eventId) {
 
         Map<String, Object> compositeKey = new HashMap<>();
         compositeKey.put(Constants.USER_ID, userId);
@@ -468,13 +474,13 @@ public class ExternalTrainingBulkUploadConsumer {
 
         List<Map<String, Object>> enrolmentRecords = cassandraOperation.getRecordsByProperties(Constants.KEYSPACE_SUNBIRD_COURSE, serverProperties.getExternalTrainingEnrolmentsTableName(), compositeKey, null, null);
         if (CollectionUtils.isEmpty(enrolmentRecords)) {
-            return null;
+            return Collections.emptyMap();
         }
         return enrolmentRecords.get(0);
     }
 
     private List<String> validateReceivedKafkaMessage(Map<String, String> inputDataMap) {
-        StringBuffer str = new StringBuffer();
+        StringBuilder str = new StringBuilder();
         List<String> errList = new ArrayList<>();
         if (StringUtils.isEmpty(inputDataMap.get(Constants.CONTEXT_ID_KEY))) {
             errList.add("Event ID is not present");
@@ -491,11 +497,10 @@ public class ExternalTrainingBulkUploadConsumer {
         return errList;
     }
 
-    private String uploadTheUpdatedCSVFile(File file) throws IOException {
+    private String uploadTheUpdatedCSVFile(File file) {
         ApiResponse uploadResponse = storageService.uploadFile(file, serverProperties.getExternalTrainingBulkUploadContainerName(), serverProperties.getCloudContainerName());
         if (!HttpStatus.OK.equals(uploadResponse.getResponseCode())) {
-            logger.info(String.format("Failed to upload file. Error: %s",
-                    uploadResponse.getParams().getErrMsg()));
+            logger.info("Failed to upload file. Error: {}", uploadResponse.getParams().getErrMsg());
             return Constants.FAILED;
         }
         return Constants.SUCCESS;
@@ -548,16 +553,16 @@ public class ExternalTrainingBulkUploadConsumer {
                 Date startDate = null;
                 Date endDate = null;
 
-                if (startObj instanceof Date) {
-                    startDate = (Date) startObj;
-                } else if (startObj instanceof Instant) {
-                    startDate = Date.from((Instant) startObj);
+                if (startObj instanceof Date date) {
+                    startDate = date;
+                } else if (startObj instanceof Instant instant) {
+                    startDate = Date.from(instant);
                 }
 
-                if (endObj instanceof Date) {
-                    endDate = (Date) endObj;
-                } else if (endObj instanceof Instant) {
-                    endDate = Date.from((Instant) endObj);
+                if (endObj instanceof Date date) {
+                    endDate = date;
+                } else if (endObj instanceof Instant instant) {
+                    endDate = Date.from(instant);
                 }
                 String batchAttributesStr = (String) eventBatch.get(Constants.BATCH_ATTRIBUTES_COLUMN);
                 Map<String, Object> batchAttributes = objectMapper.readValue(batchAttributesStr, new TypeReference<Map<String, Object>>() {
@@ -567,8 +572,8 @@ public class ExternalTrainingBulkUploadConsumer {
 
                 Object durationObj = batchAttributes.get(Constants.DURATION);
                 long durationInSec = 0;
-                if (durationObj instanceof Number) {
-                    durationInSec = ((Number) durationObj).longValue() * 60;
+                if (durationObj instanceof Number number) {
+                    durationInSec = number.longValue() * 60;
                 }
                 eventDetails.put(Constants.DURATION, durationInSec);
 
@@ -586,15 +591,14 @@ public class ExternalTrainingBulkUploadConsumer {
                     long etsForEvent = ((Date) eventDetails.get(Constants.END_DATE_CAMEL)).getTime();
                     eventDetails.put("ets", etsForEvent);
                 } else {
-                    throw new RuntimeException("Unable to fetch event details: readResponse is empty");
+                    throw new CustomException(Constants.ERROR, "Unable to fetch event details: readResponse is empty", HttpStatus.INTERNAL_SERVER_ERROR);
                 }
                 validateNotNullOrEmpty(eventDetails);
             } else {
                 logger.warn("No event batch details found for eventId: {} and batchId: {}", eventId, batchId);
             }
         } catch (Exception e) {
-            logger.error("Error while fetching event batch details for eventId: {} and batchId: {}", eventId, batchId, e);
-            throw new RuntimeException("Unable to fetch event details: " + e.getMessage(), e);
+            throw new CustomException(Constants.ERROR, "Unable to fetch event details: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -608,7 +612,7 @@ public class ExternalTrainingBulkUploadConsumer {
             if (Objects.isNull(value)) {
                 throw new IllegalArgumentException("Value for key '" + key + "' is null");
             }
-            if (value instanceof String && StringUtils.isBlank((String) value)) {
+            if (value instanceof String str && StringUtils.isBlank(str)) {
                 throw new IllegalArgumentException("Value for key '" + key + "' is empty");
             }
         }

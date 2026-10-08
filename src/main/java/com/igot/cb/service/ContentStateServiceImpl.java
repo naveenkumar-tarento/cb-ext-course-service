@@ -10,6 +10,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Collections;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -54,8 +55,10 @@ public class ContentStateServiceImpl {
     @Value("${content.state.update.required.fields}")
     private String requiredFieldsConfig;
 
+    private static final String REQUEST_BODY_EMPTY_MSG = "Request body is empty";
+
     // Example date format: adjust to match your actual format
-    private static final SimpleDateFormat dateFormatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss:SSSZ");
+    private final SimpleDateFormat dateFormatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss:SSSZ");
 
     public ApiResponse readContentState(Map<String, Object> requestBody, String authToken) {
         log.info("CourseService::readContentState:inside");
@@ -68,7 +71,7 @@ public class ContentStateServiceImpl {
             }
             // Payload validation
             if (MapUtils.isEmpty(requestBody)) {
-                setFailedResponse(response, "Request body is empty");
+                setFailedResponse(response, REQUEST_BODY_EMPTY_MSG);
                 return response;
             }
             Object requestObj = requestBody.get(Constants.REQUEST);
@@ -89,35 +92,13 @@ public class ContentStateServiceImpl {
             Object fieldsObj = requestMap.get(Constants.FIELDS);
             log.info("fieldsObj class: {}, value: {}", fieldsObj != null ? fieldsObj.getClass() : "null", fieldsObj);
             List<String> fields = null;
-            if (fieldsObj instanceof List<?>) {
-                List<String> allowedFields = Arrays.asList(allowedFieldsConfig.split(","));
-                List<String> requestedFields = ((List<?>) fieldsObj).stream()
-                        .filter(Objects::nonNull)
-                        .map(Object::toString)
-                        .collect(Collectors.toList());
-                // Validate requested fields (camelCase)
-                List<String> invalidFields = requestedFields.stream()
-                        .filter(f -> !allowedFields.contains(f))
-                        .collect(Collectors.toList());
-                if (!invalidFields.isEmpty()) {
-                    setFailedResponse(response, "Invalid fields in request: " + invalidFields);
+            if (fieldsObj instanceof List<?> fieldsList) {
+                FieldResolution resolution = resolveFields(fieldsList);
+                if (!resolution.invalidFields().isEmpty()) {
+                    setFailedResponse(response, "Invalid fields in request: " + resolution.invalidFields());
                     return response;
                 }
-                // Map payload fields (camelCase) to Cassandra columns
-                Map<String, String> payloadToCassandraMap = new HashMap<String, String>() {{
-                    put(Constants.USER_ID, Constants.USER_ID_LOWER_CASE);
-                    put(Constants.CONTENT_ID, Constants.RESOURCE_ID);
-                    put(Constants.LAST_ACCESS_TIME, Constants.LAST_ACCESS_TIME_LOWER_CASE);
-                    put(Constants.LAST_COMPLETED_TIME, Constants.LAST_COMPLETED_TIME_LOWER_CASE);
-                    put(Constants.LAST_UPDATED_TIME, Constants.LAST_UPDATED_TIME_LOWER_CASE);
-                    put(Constants.PROGRESS, Constants.PROGRESS);
-                    put(Constants.PROGRESSDETAILS, Constants.PROGRESSDETAILS);
-                    put(Constants.STATUS, Constants.STATUS);
-                    put(Constants.COMPLETION_PERCENTAGE, Constants.COMPLETION_PERCENTAGE_LOWER_CASE);
-                }};
-                fields = requestedFields.stream()
-                        .map(f -> payloadToCassandraMap.getOrDefault(f, f))
-                        .collect(Collectors.toList());
+                fields = resolution.fields();
             }
             List<Map<String, Object>> userContentDetails = cassandraOperation.getRecordsByProperties(
                     Constants.KEYSPACE_SUNBIRD_RESOURCE, Constants.USER_ENTITY_CONSUMPTION, propertyMap, fields, null);
@@ -135,23 +116,9 @@ public class ContentStateServiceImpl {
             cassandraToPayloadMap.put(Constants.COMPLETION_PERCENTAGE_LOWER_CASE, Constants.COMPLETION_PERCENTAGE);
             Set<String> allowedCassandraKeys = cassandraToPayloadMap.keySet();
             // Transform each record to use payload keys and only include allowed keys
-            List<Map<String, Object>> mappedUserContentDetails = userContentDetails.stream().map(record -> {
-                Map<String, Object> mapped = new HashMap<>();
-                for (Map.Entry<String, Object> entry : record.entrySet()) {
-                    if (!allowedCassandraKeys.contains(entry.getKey())) continue;
-                    String payloadKey = cassandraToPayloadMap.getOrDefault(entry.getKey(), entry.getKey());
-                    if (payloadKey.equalsIgnoreCase(Constants.PROGRESSDETAILS) && entry.getValue() instanceof String) {
-                        try {
-                            mapped.put(payloadKey, objectMapper.readValue((String) entry.getValue(), Object.class));
-                        } catch (Exception ex) {
-                            mapped.put(payloadKey, entry.getValue());
-                        }
-                    } else {
-                        mapped.put(payloadKey, entry.getValue());
-                    }
-                }
-                return mapped;
-            }).toList();
+            List<Map<String, Object>> mappedUserContentDetails = userContentDetails.stream()
+                    .map(rec -> mapRecordToPayloadKeys(rec, cassandraToPayloadMap, allowedCassandraKeys))
+                    .toList();
 
             Object convertInstantsToString = convertInstantsToString(mappedUserContentDetails);
 
@@ -170,6 +137,61 @@ public class ContentStateServiceImpl {
         }
     }
 
+    private record FieldResolution(List<String> fields, List<String> invalidFields) {}
+
+    private FieldResolution resolveFields(List<?> fieldsObj) {
+        List<String> allowedFields = Arrays.asList(allowedFieldsConfig.split(","));
+        List<String> requestedFields = fieldsObj.stream()
+                .filter(Objects::nonNull)
+                .map(Object::toString)
+                .toList();
+        // Validate requested fields (camelCase)
+        List<String> invalidFields = requestedFields.stream()
+                .filter(f -> !allowedFields.contains(f))
+                .toList();
+        if (!invalidFields.isEmpty()) {
+            return new FieldResolution(null, invalidFields);
+        }
+        // Map payload fields (camelCase) to Cassandra columns
+        Map<String, String> payloadToCassandraMap = buildPayloadToCassandraMap();
+        List<String> fields = requestedFields.stream()
+                .map(f -> payloadToCassandraMap.getOrDefault(f, f))
+                .toList();
+        return new FieldResolution(fields, invalidFields);
+    }
+
+    private Map<String, String> buildPayloadToCassandraMap() {
+        Map<String, String> payloadToCassandraMap = new HashMap<>();
+        payloadToCassandraMap.put(Constants.USER_ID, Constants.USER_ID_LOWER_CASE);
+        payloadToCassandraMap.put(Constants.CONTENT_ID, Constants.RESOURCE_ID);
+        payloadToCassandraMap.put(Constants.LAST_ACCESS_TIME, Constants.LAST_ACCESS_TIME_LOWER_CASE);
+        payloadToCassandraMap.put(Constants.LAST_COMPLETED_TIME, Constants.LAST_COMPLETED_TIME_LOWER_CASE);
+        payloadToCassandraMap.put(Constants.LAST_UPDATED_TIME, Constants.LAST_UPDATED_TIME_LOWER_CASE);
+        payloadToCassandraMap.put(Constants.PROGRESS, Constants.PROGRESS);
+        payloadToCassandraMap.put(Constants.PROGRESSDETAILS, Constants.PROGRESSDETAILS);
+        payloadToCassandraMap.put(Constants.STATUS, Constants.STATUS);
+        payloadToCassandraMap.put(Constants.COMPLETION_PERCENTAGE, Constants.COMPLETION_PERCENTAGE_LOWER_CASE);
+        return payloadToCassandraMap;
+    }
+
+    private Map<String, Object> mapRecordToPayloadKeys(Map<String, Object> rec, Map<String, String> cassandraToPayloadMap,
+                                                         Set<String> allowedCassandraKeys) {
+        Map<String, Object> mapped = new HashMap<>();
+        for (Map.Entry<String, Object> entry : rec.entrySet()) {
+            if (!allowedCassandraKeys.contains(entry.getKey())) continue;
+            String payloadKey = cassandraToPayloadMap.getOrDefault(entry.getKey(), entry.getKey());
+            if (payloadKey.equalsIgnoreCase(Constants.PROGRESSDETAILS) && entry.getValue() instanceof String string) {
+                try {
+                    mapped.put(payloadKey, objectMapper.readValue(string, Object.class));
+                } catch (Exception ex) {
+                    mapped.put(payloadKey, entry.getValue());
+                }
+            } else {
+                mapped.put(payloadKey, entry.getValue());
+            }
+        }
+        return mapped;
+    }
 
     @SuppressWarnings("unchecked")
     private static Object convertInstantsToString(Object value) {
@@ -202,7 +224,7 @@ public class ContentStateServiceImpl {
             }
             // Payload validation
             if (MapUtils.isEmpty(requestBody)) {
-                setFailedResponse(response, "Request body is empty");
+                setFailedResponse(response, REQUEST_BODY_EMPTY_MSG);
                 return response;
             }
             String errMsg = validateContentStateUpdatePayload(requestBody);
@@ -216,17 +238,7 @@ public class ContentStateServiceImpl {
                 Object contentsObj = requestMap.get(Constants.CONTENTS);
                 if (contentsObj instanceof List && !((List<?>) contentsObj).isEmpty()) {
                     List<Map<String, Object>> contents = (List<Map<String, Object>>) contentsObj;
-                    Map<String, String> payloadToCassandraMap = new HashMap<String, String>() {{
-                        put(Constants.USER_ID, Constants.USER_ID_LOWER_CASE);
-                        put(Constants.CONTENT_ID, Constants.RESOURCE_ID);
-                        put(Constants.LAST_ACCESS_TIME, Constants.LAST_ACCESS_TIME_LOWER_CASE);
-                        put(Constants.LAST_COMPLETED_TIME, Constants.LAST_COMPLETED_TIME_LOWER_CASE);
-                        put(Constants.LAST_UPDATED_TIME, Constants.LAST_UPDATED_TIME_LOWER_CASE);
-                        put(Constants.PROGRESS, Constants.PROGRESS);
-                        put(Constants.PROGRESSDETAILS, Constants.PROGRESSDETAILS);
-                        put(Constants.STATUS, Constants.STATUS);
-                        put(Constants.COMPLETION_PERCENTAGE, Constants.COMPLETION_PERCENTAGE_LOWER_CASE);
-                    }};
+                    Map<String, String> payloadToCassandraMap = buildPayloadToCassandraMap();
                     for (Map<String, Object> content : contents) {
                         Object contentId = content.get(Constants.CONTENT_ID);
                         Map<String, Object> propertyMap = new HashMap<>();
@@ -267,28 +279,31 @@ public class ContentStateServiceImpl {
             if (!(contentsObj instanceof List)) {
                 errList.add(Constants.CONTENTS);
             } else {
-                List<?> contents = (List<?>) contentsObj;
                 List<String> requiredAttributes = Arrays.asList(requiredFieldsConfig.split(","));
-                for (int i = 0; i < contents.size(); i++) {
-                    Object contentObj = contents.get(i);
-                    if (contentObj instanceof Map) {
-                        Map<String, Object> content = (Map<String, Object>) contentObj;
-                        for (String attr : requiredAttributes) {
-                            Object value = content.get(attr);
-                            if (value == null || (value instanceof String && StringUtils.isBlank((String) value))) {
-                                errList.add("contents[" + i + "]." + attr);
-                            }
-                        }
-                    } else {
-                        errList.add("contents[" + i + "]");
-                    }
-                }
+                validateContentsList((List<?>) contentsObj, requiredAttributes, errList);
             }
         }
         if (!errList.isEmpty()) {
             return "Missing or invalid fields: " + errList;
         }
         return "";
+    }
+
+    private void validateContentsList(List<?> contents, List<String> requiredAttributes, List<String> errList) {
+        for (int i = 0; i < contents.size(); i++) {
+            Object contentObj = contents.get(i);
+            if (contentObj instanceof Map) {
+                Map<String, Object> content = (Map<String, Object>) contentObj;
+                for (String attr : requiredAttributes) {
+                    Object value = content.get(attr);
+                    if (value == null || (value instanceof String string && StringUtils.isBlank(string))) {
+                        errList.add("contents[" + i + "]." + attr);
+                    }
+                }
+            } else {
+                errList.add("contents[" + i + "]");
+            }
+        }
     }
 
     public Map<String, Object> processContentConsumption(
@@ -299,6 +314,27 @@ public class ContentStateServiceImpl {
         int inputStatus = ((Number) inputContent.getOrDefault(Constants.STATUS, 0)).intValue();
         Map<String, Object> updatedContent = new HashMap<>(inputContent);
 
+        applyProgressDetailsJson(inputContent, updatedContent);
+
+        Date inputCompletedTime = parseDate((String) inputContent.getOrDefault(Constants.LAST_COMPLETED_TIME, ""));
+        Date inputAccessTime = parseDate((String) inputContent.getOrDefault(Constants.LAST_ACCESS_TIME, ""));
+        Object completionPercentage = updatedContent.get(Constants.COMPLETION_PERCENTAGE);
+        double completionValue = validateAndConvertCompletionPercentage(completionPercentage);
+        updatedContent.put(Constants.COMPLETION_PERCENTAGE, completionValue);
+
+        if (existingContent != null && !existingContent.isEmpty()) {
+            mergeWithExistingContent(updatedContent, inputContent, existingContent, inputAccessTime, inputCompletedTime, inputStatus);
+        } else {
+            applyNewContentDefaults(updatedContent, inputAccessTime, inputCompletedTime, inputStatus);
+        }
+
+        updatedContent.put(Constants.LAST_UPDATED_TIME, Instant.now());
+        updatedContent.put(Constants.USER_ID, userId);
+        updatedContent.replaceAll((k, v) -> v instanceof Date date ? date.toInstant() : v);
+        return updatedContent;
+    }
+
+    private void applyProgressDetailsJson(Map<String, Object> inputContent, Map<String, Object> updatedContent) throws JsonProcessingException {
         Map<String, Object> parsedMap = new HashMap<>();
         Set<String> jsonFields = new HashSet<>();
         jsonFields.add("progressdetails");
@@ -308,30 +344,14 @@ public class ContentStateServiceImpl {
             }
         }
         updatedContent.putAll(parsedMap);
+    }
 
-        Date inputCompletedTime = parseDate((String) inputContent.getOrDefault(Constants.LAST_COMPLETED_TIME, ""));
-        Date inputAccessTime = parseDate((String) inputContent.getOrDefault(Constants.LAST_ACCESS_TIME, ""));
-        Object completionPercentage = updatedContent.get(Constants.COMPLETION_PERCENTAGE);
-        if (completionPercentage instanceof Integer) {
-            double value = ((Integer) completionPercentage).doubleValue();
-            if (value < 0.0 || value > 100.0) {
-                throw new CustomException(
-                        "INVALID_COMPLETION_PERCENTAGE",
-                        "Completion percentage must be between 0 and 100.",
-                        HttpStatus.BAD_REQUEST
-                );
-            }
-            updatedContent.put(Constants.COMPLETION_PERCENTAGE, value);
-        } else if (completionPercentage instanceof Double) {
-            double value = (Double) completionPercentage;
-            if (value < 0.0 || value > 100.0) {
-                throw new CustomException(
-                        "INVALID_COMPLETION_PERCENTAGE",
-                        "Completion percentage must be between 0 and 100.",
-                        HttpStatus.BAD_REQUEST
-                );
-            }
-            updatedContent.put(Constants.COMPLETION_PERCENTAGE, value);
+    private double validateAndConvertCompletionPercentage(Object completionPercentage) {
+        double value;
+        if (completionPercentage instanceof Integer integer) {
+            value = integer.doubleValue();
+        } else if (completionPercentage instanceof Double aDouble) {
+            value = aDouble;
         } else {
             throw new CustomException(
                     "INVALID_COMPLETION_PERCENTAGE_TYPE",
@@ -339,63 +359,66 @@ public class ContentStateServiceImpl {
                     HttpStatus.BAD_REQUEST
             );
         }
-        if (existingContent != null && !existingContent.isEmpty()) {
-            Date existingAccessTime;
-            Object existingAccessTimeObj = existingContent.get(Constants.LAST_ACCESS_TIME);
-            if (existingAccessTimeObj instanceof String) {
-                existingAccessTime = parseDate((String) existingAccessTimeObj);
-            } else if (existingAccessTimeObj instanceof Date) {
-                existingAccessTime = (Date) existingAccessTimeObj;
-            } else {
-                existingAccessTime = null;
-            }
-            if (existingAccessTime == null) {
-                existingAccessTime = parseDate((String) existingContent.getOrDefault(Constants.OLD_LAST_ACCESS_TIME, ""));
-            }
-            updatedContent.put(Constants.LAST_ACCESS_TIME, compareTime(existingAccessTime, inputAccessTime));
+        if (value < 0.0 || value > 100.0) {
+            throw new CustomException(
+                    "INVALID_COMPLETION_PERCENTAGE",
+                    "Completion percentage must be between 0 and 100.",
+                    HttpStatus.BAD_REQUEST
+            );
+        }
+        return value;
+    }
 
-            int inputProgress = ((Number) inputContent.getOrDefault(Constants.PROGRESS, 0)).intValue();
-            int existingProgress = ((Number) existingContent.getOrDefault(Constants.PROGRESS, 0)).intValue();
-            updatedContent.put(Constants.PROGRESS, Math.max(inputProgress, existingProgress));
+    private Date resolveExistingDate(Map<String, Object> existingContent, String primaryKey, String fallbackKey) {
+        Object dateObj = existingContent.get(primaryKey);
+        Date date;
+        if (dateObj instanceof String string) {
+            date = parseDate(string);
+        } else if (dateObj instanceof Date d) {
+            date = d;
+        } else {
+            date = null;
+        }
+        if (date == null) {
+            date = parseDate((String) existingContent.getOrDefault(fallbackKey, ""));
+        }
+        return date;
+    }
 
-            int existingStatus = ((Number) existingContent.getOrDefault(Constants.STATUS, 0)).intValue();
-            Object existingCompletedTimeObj = existingContent.get(Constants.LAST_COMPLETED_TIME);
-            Date existingCompletedTime;
-            if (existingCompletedTimeObj instanceof String) {
-                existingCompletedTime = parseDate((String) existingCompletedTimeObj);
-            } else if (existingCompletedTimeObj instanceof Date) {
-                existingCompletedTime = (Date) existingCompletedTimeObj;
-            } else {
-                existingCompletedTime = null;
-            }
-            if (existingCompletedTime == null) {
-                existingCompletedTime = parseDate((String) existingContent.getOrDefault(Constants.OLD_LAST_COMPLETED_TIME, ""));
-            }
+    private void mergeWithExistingContent(Map<String, Object> updatedContent, Map<String, Object> inputContent,
+                                           Map<String, Object> existingContent, Date inputAccessTime,
+                                           Date inputCompletedTime, int inputStatus) {
+        Date existingAccessTime = resolveExistingDate(existingContent, Constants.LAST_ACCESS_TIME, Constants.OLD_LAST_ACCESS_TIME);
+        updatedContent.put(Constants.LAST_ACCESS_TIME, compareTime(existingAccessTime, inputAccessTime));
 
-            if (inputStatus >= existingStatus) {
-                if (inputStatus >= 2) {
-                    updatedContent.put(Constants.STATUS, 2);
-                    updatedContent.put(Constants.PROGRESS, 100);
-                    updatedContent.put(Constants.LAST_COMPLETED_TIME, compareTime(existingCompletedTime, inputCompletedTime));
-                }
-            } else {
-                updatedContent.put(Constants.STATUS, existingStatus);
+        int inputProgress = ((Number) inputContent.getOrDefault(Constants.PROGRESS, 0)).intValue();
+        int existingProgress = ((Number) existingContent.getOrDefault(Constants.PROGRESS, 0)).intValue();
+        updatedContent.put(Constants.PROGRESS, Math.max(inputProgress, existingProgress));
+
+        int existingStatus = ((Number) existingContent.getOrDefault(Constants.STATUS, 0)).intValue();
+        Date existingCompletedTime = resolveExistingDate(existingContent, Constants.LAST_COMPLETED_TIME, Constants.OLD_LAST_COMPLETED_TIME);
+
+        if (inputStatus >= existingStatus) {
+            if (inputStatus >= 2) {
+                updatedContent.put(Constants.STATUS, 2);
+                updatedContent.put(Constants.PROGRESS, 100);
+                updatedContent.put(Constants.LAST_COMPLETED_TIME, compareTime(existingCompletedTime, inputCompletedTime));
             }
         } else {
-            if (inputStatus >= 2) {
-                updatedContent.put(Constants.PROGRESS, 100);
-                updatedContent.put(Constants.LAST_COMPLETED_TIME, compareTime(null, inputCompletedTime));
-                updatedContent.put(Constants.STATUS, 2);
-            } else {
-                updatedContent.put(Constants.PROGRESS, 0);
-            }
-            updatedContent.put(Constants.LAST_ACCESS_TIME, compareTime(null, inputAccessTime));
+            updatedContent.put(Constants.STATUS, existingStatus);
         }
+    }
 
-        updatedContent.put(Constants.LAST_UPDATED_TIME, Instant.now());
-        updatedContent.put(Constants.USER_ID, userId);
-        updatedContent.replaceAll((k, v) -> v instanceof Date ? ((Date) v).toInstant() : v);
-        return updatedContent;
+    private void applyNewContentDefaults(Map<String, Object> updatedContent, Date inputAccessTime,
+                                          Date inputCompletedTime, int inputStatus) {
+        if (inputStatus >= 2) {
+            updatedContent.put(Constants.PROGRESS, 100);
+            updatedContent.put(Constants.LAST_COMPLETED_TIME, compareTime(null, inputCompletedTime));
+            updatedContent.put(Constants.STATUS, 2);
+        } else {
+            updatedContent.put(Constants.PROGRESS, 0);
+        }
+        updatedContent.put(Constants.LAST_ACCESS_TIME, compareTime(null, inputAccessTime));
     }
     public Date parseDate(String dateString) {
         if (StringUtils.isNotBlank(dateString) && !StringUtils.equalsIgnoreCase(Constants.NULL, dateString)) {
@@ -443,7 +466,7 @@ public class ContentStateServiceImpl {
         ApiResponse response = ProjectUtil.createDefaultResponse(Constants.API_USER_CONTENT_CONSUMPTION_V2_READ);
         try {
             if (MapUtils.isEmpty(requestBody)) {
-                setFailedResponse(response, "Request body is empty");
+                setFailedResponse(response, REQUEST_BODY_EMPTY_MSG);
                 return response;
             }
 
@@ -462,9 +485,9 @@ public class ContentStateServiceImpl {
 
             // Build property map and fetch records
             Map<String, Object> propertyMap = new HashMap<>();
-            propertyMap.put(Constants.USER_ID, (String) requestMap.get(Constants.USER_ID));
-            propertyMap.put(Constants.COURSE_ID, (String) requestMap.get(Constants.COURSE_ID));
-            propertyMap.put(Constants.BATCH_ID, (String) requestMap.get(Constants.BATCH_ID));
+            propertyMap.put(Constants.USER_ID, requestMap.get(Constants.USER_ID));
+            propertyMap.put(Constants.COURSE_ID, requestMap.get(Constants.COURSE_ID));
+            propertyMap.put(Constants.BATCH_ID, requestMap.get(Constants.BATCH_ID));
 
             List<String> fields = extractFieldsList(requestMap);
             List<Map<String, Object>> records = cassandraOperation.getRecordsByProperties(
@@ -510,15 +533,15 @@ public class ContentStateServiceImpl {
             return fields;
         }
         log.info("No specific fields requested, fetching all fields");
-        return null;
+        return Collections.emptyList();
     }
 
-    private Map<String, Object> transformRecord(Map<String, Object> record) {
+    private Map<String, Object> transformRecord(Map<String, Object> rec) {
         Map<String, Object> transformed = new HashMap<>();
-        record.forEach((key, value) -> {
-            if (Constants.PROGRESSDETAILS.equalsIgnoreCase(key) && value instanceof String) {
+        rec.forEach((key, value) -> {
+            if (Constants.PROGRESSDETAILS.equalsIgnoreCase(key) && value instanceof String string) {
                 try {
-                    transformed.put(key, objectMapper.readValue((String) value, Object.class));
+                    transformed.put(key, objectMapper.readValue(string, Object.class));
                 } catch (Exception ex) {
                     log.error("Error parsing progressdetails JSON: {}", value, ex);
                     transformed.put(key, value);

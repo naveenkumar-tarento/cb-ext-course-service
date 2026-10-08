@@ -29,6 +29,11 @@ import java.util.*;
 @Service
 @Slf4j
 public class NotificationServiceImpl implements NotificationService {
+
+    private static final String INVALID_INPUT_CONTENT_RETIREMENT_NOTIFICATION = "Invalid input for content retirement in-app notification";
+    private static final String IN_APP_RETIREMENT_NOTIFICATION_SENT_LOG = "In-app retirement notification [{}] sent for course {}";
+    private static final String ERROR_SENDING_IN_APP_RETIREMENT_NOTIFICATION = "Error while sending in-app retirement notification";
+
     @Autowired
     private AccessTokenValidator accessTokenValidator;
 
@@ -204,7 +209,7 @@ public class NotificationServiceImpl implements NotificationService {
                 }
             }
             StringWriter writer = new StringWriter();
-            velocityEngine.evaluate(context, writer, Constants.HTMLTemplate, htmlTemplate);
+            velocityEngine.evaluate(context, writer, Constants.HTML_TEMPLATE, htmlTemplate);
             replacedHTML = writer.toString();
         } catch (Exception e) {
             log.error("Unable to create template ", e);
@@ -260,10 +265,8 @@ public class NotificationServiceImpl implements NotificationService {
         if (StringUtils.isBlank((String) request.get(Constants.ASSIGNMENT_TITLE)))
             errList.add(Constants.ASSIGNMENT_TITLE);
 
-        if (extraRequiredField != null) {
-            if (StringUtils.isBlank((String) request.get(extraRequiredField))) {
-                errList.add(extraRequiredField);
-            }
+        if (extraRequiredField != null && StringUtils.isBlank((String) request.get(extraRequiredField))) {
+            errList.add(extraRequiredField);
         }
 
         if (!errList.isEmpty()) {
@@ -294,7 +297,22 @@ public class NotificationServiceImpl implements NotificationService {
             return Map.of(Constants.EMAILS, emails, Constants.FIRST_NAME, firstName);
         }
 
-        Object contentsObj = Optional.ofNullable(resp.get(Constants.RESULT))
+        Object contentsObj = extractContentsFromResponse(resp);
+
+        if (!(contentsObj instanceof List<?> contents)) {
+            return Map.of(Constants.EMAILS, emails, Constants.FIRST_NAME, firstName);
+        }
+
+        boolean singleUser = userIds.size() == Constants.ONE;
+        for (Object item : contents) {
+            firstName = collectEmailAndFirstName(item, emails, firstName, singleUser);
+        }
+
+        return Map.of(Constants.EMAILS, emails, Constants.FIRST_NAME, firstName);
+    }
+
+    private Object extractContentsFromResponse(Map<String, Object> resp) {
+        return Optional.ofNullable(resp.get(Constants.RESULT))
                 .filter(Map.class::isInstance)
                 .map(Map.class::cast)
                 .map(result -> result.get(Constants.RESPONSE))
@@ -302,37 +320,36 @@ public class NotificationServiceImpl implements NotificationService {
                 .map(Map.class::cast)
                 .map(response -> response.get(Constants.CONTENT))
                 .orElse(null);
+    }
 
-        if (!(contentsObj instanceof List<?> contents)) {
-            return Map.of(Constants.EMAILS, emails, Constants.FIRST_NAME, firstName);
+    private String collectEmailAndFirstName(Object item, List<String> emails, String firstName, boolean singleUser) {
+        if (!(item instanceof Map<?, ?> content)) {
+            return firstName;
+        }
+        Object personalObj = Optional.ofNullable(content.get(Constants.PROFILE_DETAILS))
+                .filter(Map.class::isInstance)
+                .map(Map.class::cast)
+                .map(p -> p.get(Constants.PERSONAL_DETAILS))
+                .orElse(null);
+
+        if (!(personalObj instanceof Map<?, ?> personal)) {
+            return firstName;
         }
 
-        for (Object item : contents) {
-            if (!(item instanceof Map<?, ?> content)) continue;
-            Object personalObj = Optional.ofNullable(content.get(Constants.PROFILE_DETAILS))
-                    .filter(Map.class::isInstance)
-                    .map(Map.class::cast)
-                    .map(p -> p.get(Constants.PERSONAL_DETAILS))
-                    .orElse(null);
-
-            if (!(personalObj instanceof Map<?, ?> personal)) continue;
-
-            // Extract email
-            Object emailObj = personal.get(Constants.PRIMARY_EMAIL);
-            if (emailObj instanceof String email && StringUtils.isNotBlank(email)) {
-                emails.add(email);
-            }
-
-            // Extract first name (only if single user)
-            if (userIds.size() == Constants.ONE) {
-                Object nameObj = personal.get(Constants.FIRST_NAME);
-                if (nameObj instanceof String name && StringUtils.isNotBlank(name)) {
-                    firstName = name;
-                }
-            }
+        // Extract email
+        Object emailObj = personal.get(Constants.PRIMARY_EMAIL);
+        if (emailObj instanceof String email && StringUtils.isNotBlank(email)) {
+            emails.add(email);
         }
 
-        return Map.of(Constants.EMAILS, emails, Constants.FIRST_NAME, firstName);
+        // Extract first name (only if single user)
+        if (singleUser) {
+            Object nameObj = personal.get(Constants.FIRST_NAME);
+            if (nameObj instanceof String name && StringUtils.isNotBlank(name)) {
+                return name;
+            }
+        }
+        return firstName;
     }
 
     public ApiResponse notifyAssignmentEvaluate(Map<String, Object> requestData, String authToken) {
@@ -462,7 +479,7 @@ public class NotificationServiceImpl implements NotificationService {
 
         try {
             if (CollectionUtils.isEmpty(userIds) || StringUtils.isEmpty(notificationType)) {
-                log.warn("Invalid input for content retirement in-app notification");
+                log.warn(INVALID_INPUT_CONTENT_RETIREMENT_NOTIFICATION);
                 return;
             }
 
@@ -493,10 +510,10 @@ public class NotificationServiceImpl implements NotificationService {
             message.put(Constants.DATA, data);
 
             sendInAppNotification(subCategory, Constants.ALERT, userIds, message);
-            log.info("In-app retirement notification [{}] sent for course {}",
+            log.info(IN_APP_RETIREMENT_NOTIFICATION_SENT_LOG,
                     notificationType, contentName);
         } catch (Exception e) {
-            log.error("Error while sending in-app retirement notification", e);
+            log.error(ERROR_SENDING_IN_APP_RETIREMENT_NOTIFICATION, e);
         }
     }
 
@@ -504,7 +521,7 @@ public class NotificationServiceImpl implements NotificationService {
     public void sendNotificationForContentRetirementSpv(String contentId, String contentName, ArrayList<String> userIds, String notificationType, LocalDate date, List<String> emails, String requestedBy) {
         try {
             if (CollectionUtils.isEmpty(userIds) || StringUtils.isEmpty(notificationType)) {
-                log.warn("Invalid input for content retirement in-app notification");
+                log.warn(INVALID_INPUT_CONTENT_RETIREMENT_NOTIFICATION);
                 return;
             }
             String subCategory = notificationType;
@@ -528,10 +545,10 @@ public class NotificationServiceImpl implements NotificationService {
             mailRequestMap.put(Constants.USER_ID, requestedBy);
             sendInAppNotification(subCategory, Constants.ALERT, userIds, message);
             notifyUsersByEmail(mailRequestMap, Constants.RETIREMENT_SCHEDULE_TEMPLATE);
-            log.info("In-app retirement notification [{}] sent for course {}",
+            log.info(IN_APP_RETIREMENT_NOTIFICATION_SENT_LOG,
                     notificationType, contentName);
         } catch (Exception e) {
-            log.error("Error while sending in-app retirement notification", e);
+            log.error(ERROR_SENDING_IN_APP_RETIREMENT_NOTIFICATION, e);
         }
     }
 
@@ -539,7 +556,7 @@ public class NotificationServiceImpl implements NotificationService {
     public void sendNotificationForExternalTraining(String trainingId, String trainingName, List<String> userIds, String notificationType) {
         try {
             if (CollectionUtils.isEmpty(userIds) || StringUtils.isEmpty(notificationType)) {
-                log.warn("Invalid input for content retirement in-app notification");
+                log.warn(INVALID_INPUT_CONTENT_RETIREMENT_NOTIFICATION);
                 return;
             }
             String subCategory = notificationType;
@@ -551,10 +568,10 @@ public class NotificationServiceImpl implements NotificationService {
             message.put(Constants.PLACE_HOLDERS, placeHolders);
             message.put(Constants.DATA, data);
             sendInAppNotification(subCategory, Constants.ALERT, userIds, message);
-            log.info("In-app retirement notification [{}] sent for course {}",
+            log.info(IN_APP_RETIREMENT_NOTIFICATION_SENT_LOG,
                     notificationType, trainingName);
         } catch (Exception e) {
-            log.error("Error while sending in-app retirement notification", e);
+            log.error(ERROR_SENDING_IN_APP_RETIREMENT_NOTIFICATION, e);
         }
 
     }

@@ -63,7 +63,7 @@ class ContentHealthServiceImplTest {
     // ==================== getContentHealthReport Tests ====================
 
     @Test
-    void testGetContentHealthReport_Success_WithMultipleMetrics() throws Exception {
+    void testGetContentHealthReport_Success_WithMultipleMetrics() {
         // Arrange
         Map<String, String> cachedData = new HashMap<>();
         cachedData.put("dropoff_rate", "{\"name\":\"Drop-off Rate\",\"overview\":\"Measures how many learners quit immediately after the first resource, indicating a poor hook or onboarding experience.\",\"maxWeight\":15,\"type\":\"dynamic\",\"score\":1,\"value\":20.0,\"points\":3.0,\"calculated_at\":\"2026-05-11T16:27:24Z\"}");
@@ -109,7 +109,7 @@ class ContentHealthServiceImplTest {
     }
 
     @Test
-    void testGetContentHealthReport_Success_WithSingleMetric() throws Exception {
+    void testGetContentHealthReport_Success_WithSingleMetric() {
         // Arrange
         Map<String, String> cachedData = new HashMap<>();
         cachedData.put("dropoff_rate", "{\"name\":\"Drop-off Rate\",\"score\":1,\"type\":\"dynamic\"}");
@@ -215,7 +215,7 @@ class ContentHealthServiceImplTest {
     }
 
     @Test
-    void testGetContentHealthReport_ContentIdWithSpaces() throws Exception {
+    void testGetContentHealthReport_ContentIdWithSpaces() {
         // Arrange
         String contentIdWithSpaces = "  " + CONTENT_ID + "  ";
         Map<String, String> cachedData = new HashMap<>();
@@ -307,7 +307,7 @@ class ContentHealthServiceImplTest {
     // ==================== getContentHealthSummary Tests ====================
 
     @Test
-    void testGetContentHealthSummary_Success_SingleCourseId() throws Exception {
+    void testGetContentHealthSummary_Success_SingleCourseId() {
         // Arrange
         String healthScoreJson = "{\"total_health_score\":9.0,\"red_flag\":false,\"calculated_at\":\"2026-05-12T09:10:58Z\"}";
         Map<String, Object> requestBody = new HashMap<>();
@@ -341,7 +341,7 @@ class ContentHealthServiceImplTest {
     }
 
     @Test
-    void testGetContentHealthSummary_Success_MultipleCourseIds() throws Exception {
+    void testGetContentHealthSummary_Success_MultipleCourseIds() {
         // Arrange
         String healthScoreJson1 = "{\"total_health_score\":5.0,\"calculated_at\":\"2026-05-11T16:27:24Z\"}";
         String healthScoreJson2 = "{\"total_health_score\":6.0,\"calculated_at\":\"2026-05-11T16:27:24Z\"}";
@@ -476,7 +476,7 @@ class ContentHealthServiceImplTest {
     }
 
     @Test
-    void testGetContentHealthSummary_CourseIdListWithNullValues() throws Exception {
+    void testGetContentHealthSummary_CourseIdListWithNullValues() {
         // Arrange
         String healthScoreJson = "{\"total_health_score\":5.0,\"calculated_at\":\"2026-05-11T16:27:24Z\"}";
 
@@ -506,7 +506,7 @@ class ContentHealthServiceImplTest {
     }
 
     @Test
-    void testGetContentHealthSummary_CourseIdListWithEmptyStrings() throws Exception {
+    void testGetContentHealthSummary_CourseIdListWithEmptyStrings() {
         // Arrange
         String healthScoreJson = "{\"total_health_score\":5.0,\"calculated_at\":\"2026-05-11T16:27:24Z\"}";
 
@@ -535,7 +535,7 @@ class ContentHealthServiceImplTest {
     }
 
     @Test
-    void testGetContentHealthSummary_CourseIdWithSpaces() throws Exception {
+    void testGetContentHealthSummary_CourseIdWithSpaces() {
         // Arrange
         String healthScoreJson = "{\"total_health_score\":5.0,\"calculated_at\":\"2026-05-11T16:27:24Z\"}";
 
@@ -560,7 +560,7 @@ class ContentHealthServiceImplTest {
     }
 
     @Test
-    void testGetContentHealthSummary_InvalidJsonInRedisData() throws Exception {
+    void testGetContentHealthSummary_InvalidJsonInRedisData() {
         // Arrange
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put(Constants.COURSE_ID, Arrays.asList("do_123"));
@@ -608,7 +608,7 @@ class ContentHealthServiceImplTest {
     }
 
     @Test
-    void testGetContentHealthSummary_PartialFailure_SomeCoursesSucceedSomeFail() throws Exception {
+    void testGetContentHealthSummary_PartialFailure_SomeCoursesSucceedSomeFail() {
         // Arrange
         String healthScoreJson1 = "{\"total_health_score\":5.0,\"calculated_at\":\"2026-05-11T16:27:24Z\"}";
         String healthScoreJson2 = "{\"total_health_score\":6.0,\"calculated_at\":\"2026-05-11T16:27:24Z\"}";
@@ -641,7 +641,7 @@ class ContentHealthServiceImplTest {
     }
 
     @Test
-    void testGetContentHealthSummary_AllCoursesWithHealthScoreOnly() throws Exception {
+    void testGetContentHealthSummary_AllCoursesWithHealthScoreOnly() {
         // Arrange - only health_score
         String healthScoreJson = "{\"total_health_score\":5.0,\"red_flag\":false,\"calculated_at\":\"2026-05-11T16:27:24Z\"}";
 

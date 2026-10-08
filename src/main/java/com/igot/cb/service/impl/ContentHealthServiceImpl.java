@@ -113,22 +113,7 @@ public class ContentHealthServiceImpl implements ContentHealthService {
 
                 String courseId = courseIdObjItem.toString().trim();
 
-                try {
-                    String redisKey = Constants.COURSE_METRICS_KEY_PREFIX + courseId;
-                    String healthScoreJson = redisDataCacheMgr.getHashField(redisKey, Constants.HEALTH_SCORE, serverProperties.getContentHealthDbIndex());
-
-                    if (StringUtils.isNotBlank(healthScoreJson)) {
-                        Map<String, Object> healthScoreData = objectMapper.readValue(healthScoreJson, Map.class);
-
-                        Map<String, Object> courseData = new HashMap<>();
-                        courseData.put(courseId, healthScoreData);
-                        resultList.add(courseData);
-                    } else {
-                        log.debug("ContentHealthServiceImpl:getContentHealthSummary - No health_score data for courseId: {}", courseId);
-                    }
-                } catch (Exception e) {
-                    log.error("ContentHealthServiceImpl:getContentHealthSummary - Error processing courseId: {}", courseId, e);
-                }
+                processCourseHealthScore(courseId, resultList);
             }
             response.getResult().put(Constants.CONTENT_LIST, resultList);
             response.setResponseCode(HttpStatus.OK);
@@ -140,6 +125,25 @@ public class ContentHealthServiceImpl implements ContentHealthService {
             response.put(Constants.ERROR_MESSAGE, "Failed to fetch content health summary: " + e.getMessage());
         }
         return response;
+    }
+
+    private void processCourseHealthScore(String courseId, List<Map<String, Object>> resultList) {
+        try {
+            String redisKey = Constants.COURSE_METRICS_KEY_PREFIX + courseId;
+            String healthScoreJson = redisDataCacheMgr.getHashField(redisKey, Constants.HEALTH_SCORE, serverProperties.getContentHealthDbIndex());
+
+            if (StringUtils.isNotBlank(healthScoreJson)) {
+                Map<String, Object> healthScoreData = objectMapper.readValue(healthScoreJson, Map.class);
+
+                Map<String, Object> courseData = new HashMap<>();
+                courseData.put(courseId, healthScoreData);
+                resultList.add(courseData);
+            } else {
+                log.debug("ContentHealthServiceImpl:getContentHealthSummary - No health_score data for courseId: {}", courseId);
+            }
+        } catch (Exception e) {
+            log.error("ContentHealthServiceImpl:getContentHealthSummary - Error processing courseId: {}", courseId, e);
+        }
     }
 
     /**

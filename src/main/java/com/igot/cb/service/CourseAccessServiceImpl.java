@@ -3,7 +3,6 @@ package com.igot.cb.service;
 import java.time.LocalDate;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -37,6 +36,11 @@ import static com.igot.cb.util.Constants.*;
 @Service
 @Slf4j
 public class CourseAccessServiceImpl {
+    private static final String REQUEST_BODY_NULL_OR_EMPTY = "Request body is null or empty";
+    private static final String API_COURSE_ACCESS_GET_COURSES_FOR_USER = "api.courseAccess.getCoursesForUser";
+    private static final String IDENTIFIERS_KEY = "identifiers";
+    private static final String COUNT_KEY = "count";
+
     private final AccessTokenValidator accessTokenValidator;
     private final UserAndOrgServiceImpl userProfileServiceImpl;
     private final AccessSettingRuleCacheMgr accessSettingRuleCacheMgr;
@@ -44,7 +48,6 @@ public class CourseAccessServiceImpl {
     private final OutboundRequestHandlerServiceImpl outboundRequestHandlerService;
     private final ObjectMapper objectMapper;
     private final CbPlanLearnerServiceImpl cbPlanLearnerService;
-    private final CassandraOperation cassandraOperation;
 
     @Autowired
     private RedisCacheMgr redisCacheMgr;
@@ -122,7 +125,6 @@ public class CourseAccessServiceImpl {
         this.outboundRequestHandlerService = outboundRequestHandlerService1;
         this.objectMapper = new ObjectMapper();
         this.cbPlanLearnerService = cbPlanLearnerService;
-        this.cassandraOperation = cassandraOperation;
     }
 
     /**
@@ -146,43 +148,53 @@ public class CourseAccessServiceImpl {
 
         // Validate the request payload
         if (MapUtils.isEmpty(request)) {
-            String errMsg = "Request body is null or empty";
+            String errMsg = REQUEST_BODY_NULL_OR_EMPTY;
             log.error(errMsg);
             response.updateErrorDetails(errMsg, HttpStatus.BAD_REQUEST);
             return response;
         }
 
-        String cachedCourseForUser = redisCacheMgr.getFromCache(Constants.ACCESS_KEY + userId);
-        if (cachedCourseForUser != null && !cachedCourseForUser.isEmpty()){
-            if (cachedCourseForUser.equalsIgnoreCase(Constants.NO_RECORDS_FOUND)){
-                response.getResult().put(Constants.CONTENT, new ArrayList<>());
-                return response;
-            }
-            try {
-                response.getResult().put(Constants.CONTENT, mapper.readValue(
-                        cachedCourseForUser,
-                        new TypeReference<List<Map<String, Object>>>() {}
-                ));
-                log.info("AccessSettingRule evalution: UserId: ", userId);
-                return response;
-            } catch (JsonProcessingException e) {
-                throw new RuntimeException(e);
-            }
+        ApiResponse cachedResponse = tryGetCoursesForUserFromCache(userId, response);
+        if (cachedResponse != null) {
+            return cachedResponse;
         }
 
         // Fetch user profile details
         Map<String, Integer> userProfile = userProfileServiceImpl.getUserProfile(userId);
+        populateUserCoursesIntoResponse(userId, userProfile, response);
+        // If user has access to the course then return that list.
+        return response;
+    }
+
+    private ApiResponse tryGetCoursesForUserFromCache(String userId, ApiResponse response) {
+        String cachedCourseForUser = redisCacheMgr.getFromCache(Constants.ACCESS_KEY + userId);
+        if (cachedCourseForUser == null || cachedCourseForUser.isEmpty()) {
+            return null;
+        }
+        if (cachedCourseForUser.equalsIgnoreCase(Constants.NO_RECORDS_FOUND)) {
+            response.getResult().put(Constants.CONTENT, new ArrayList<>());
+            return response;
+        }
+        try {
+            response.getResult().put(Constants.CONTENT, mapper.readValue(
+                    cachedCourseForUser,
+                    new TypeReference<List<Map<String, Object>>>() {}
+            ));
+            log.info("AccessSettingRule evalution: UserId: ", userId);
+            return response;
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private void populateUserCoursesIntoResponse(String userId, Map<String, Integer> userProfile, ApiResponse response) {
         try {
             List<Map<String, Object>> userCourses = new ArrayList<>();
             if (retrieveUserCourses(userProfile, userCourses)) {
                 log.info("AccessSettingRule evalution: UserId: {} courses retrieved: {}", userId, userCourses.size());
                 if (!userCourses.isEmpty()) {
                     log.info("No courses found for user profile: {}", userProfile);
-                    try {
-                        redisCacheMgr.putInCache(Constants.ACCESS_KEY+userId, mapper.writeValueAsString(userCourses));
-                    } catch (JsonProcessingException e) {
-                        throw new RuntimeException(e);
-                    }
+                    cacheUserCoursesAsJson(userId, userCourses);
                 }else {
                     redisCacheMgr.putInCache(Constants.ACCESS_KEY+userId, Constants.NO_RECORDS_FOUND);
                 }
@@ -194,8 +206,14 @@ public class CourseAccessServiceImpl {
             log.error("Error occurred while migrating access setting rules: {}", e.getMessage(), e);
             response.updateErrorDetails("Rule evalution failed due to an error", HttpStatus.INTERNAL_SERVER_ERROR);
         }
-        // If user has access to the course then return that list.
-        return response;
+    }
+
+    private void cacheUserCoursesAsJson(String userId, List<Map<String, Object>> userCourses) {
+        try {
+            redisCacheMgr.putInCache(Constants.ACCESS_KEY+userId, mapper.writeValueAsString(userCourses));
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -264,7 +282,7 @@ public class CourseAccessServiceImpl {
 
     public ApiResponse getAssignedCoursesForUser(Map<String, Object> request, String authToken) {
         log.info("CourseAccessServiceImpl::getAssignedCoursesForUser:inside");
-        ApiResponse response = ApiResponse.createDefaultResponse("api.courseAccess.getCoursesForUser");
+        ApiResponse response = ApiResponse.createDefaultResponse(API_COURSE_ACCESS_GET_COURSES_FOR_USER);
         String userId = accessTokenValidator.fetchUserIdFromAccessToken(authToken, response);
         if (userId == null) {
             return response;
@@ -274,11 +292,11 @@ public class CourseAccessServiceImpl {
 
     public ApiResponse getAssignedCoursesForUserByAdmin(String userId, Map<String, Object> request, String authToken) {
         log.info("CourseAccessServiceImpl::getAssignedCoursesForUserByAdmin:inside");
-        ApiResponse response = ApiResponse.createDefaultResponse("api.courseAccess.getCoursesForUser");
+        ApiResponse response = ApiResponse.createDefaultResponse(API_COURSE_ACCESS_GET_COURSES_FOR_USER);
         try {
             // Validate the request payload
             if (MapUtils.isEmpty(request)) {
-                String errMsg = "Request body is null or empty";
+                String errMsg = REQUEST_BODY_NULL_OR_EMPTY;
                 log.error(errMsg);
                 response.updateErrorDetails(errMsg, HttpStatus.BAD_REQUEST);
                 return response;
@@ -303,13 +321,7 @@ public class CourseAccessServiceImpl {
             }
             // Fetch user profile details
             Map<String, Integer> userProfile = userProfileServiceImpl.getUserProfile(userId);
-            List<CachedAccessSettingRule> rules = new ArrayList<>();
-            for (String courseId : courseIds) {
-                CachedAccessSettingRule rule = accessSettingRuleCacheMgr.getOrLoadAccessSettingRule(courseId, courseCategory);
-                if (rule != null) {
-                    rules.add(rule);
-                }
-            }
+            List<CachedAccessSettingRule> rules = loadAccessSettingRules(courseIds, courseCategory);
             List<Map<String, Object>> userCourses = new ArrayList<>();
             if (rules.isEmpty()) {
                 log.warn("No access setting rules found for course category: {}", courseCategory);
@@ -317,35 +329,7 @@ public class CourseAccessServiceImpl {
                 return response;
             }
             for (CachedAccessSettingRule rule : rules) {
-                Map<String, Object> contextData = rule.getContextData();
-                if (contextData == null || !contextData.containsKey(Constants.ACCESS_CONTROL_ID)) {
-                    log.warn("No accessControl found in rule: {}", rule.getCacheKey());
-                    continue;
-                }
-                Map<String, Object> accessSettingIdMap =
-                        (Map<String, Object>) contextData.get(Constants.ACCESS_CONTROL_ID);
-
-                if (evaluateAccessSettingRule(accessSettingIdMap, userProfile)) {
-                    List<String> fieldsToFetch = Arrays.asList(contentReadFields.split(","));
-                    Map<String, Object> contentDetails =
-                            contentService.readContent(rule.getContextId(), fieldsToFetch);
-                    // --- Begin custom logic for courseUnits ---
-                    if (contentDetails != null &&
-                            Constants.COURSE_CATEGORY_COMPREHENSIVE_ASSESSMENT_PROGRAM.equals(contentDetails.get(Constants.COURSE_CATEGORY)) &&
-                            contentDetails.get(Constants.CHILD_NODES) instanceof List &&
-                            contentDetails.get(Constants.LEAF_NODES) instanceof List) {
-                        List<String> childNodes = (List<String>) contentDetails.get(Constants.CHILD_NODES);
-                        List<String> leafNodes = (List<String>) contentDetails.get(Constants.LEAF_NODES);
-                        Set<String> leafSet = new HashSet<>(leafNodes);
-                        List<String> courseUnits = childNodes.stream()
-                                .filter(child -> !leafSet.contains(child))
-                                .collect(Collectors.toList());
-                        contentDetails.put(Constants.COURSE_UNITS, courseUnits);
-                        contentDetails.put(Constants.END_DATE_CAMEL, (String) contentDetails.get(Constants.END_DATE_CAMEL));
-}
-                    // --- End custom logic for courseUnits ---
-                    userCourses.add(contentDetails);
-                }
+                addUserCourseIfAccessible(rule, userProfile, userCourses);
             }
             log.info("AccessSettingRule evaluation: UserId: {} | Courses retrieved: {}", userId, userCourses.size());
             redisCacheMgr.putInCache(redisKey, mapper.writeValueAsString(userCourses));
@@ -355,6 +339,51 @@ public class CourseAccessServiceImpl {
             response.updateErrorDetails("Rule evaluation failed due to an error", HttpStatus.INTERNAL_SERVER_ERROR);
         }
         return response;
+    }
+
+    private List<CachedAccessSettingRule> loadAccessSettingRules(List<String> courseIds, String courseCategory) {
+        List<CachedAccessSettingRule> rules = new ArrayList<>();
+        for (String courseId : courseIds) {
+            CachedAccessSettingRule rule = accessSettingRuleCacheMgr.getOrLoadAccessSettingRule(courseId, courseCategory);
+            if (rule != null) {
+                rules.add(rule);
+            }
+        }
+        return rules;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void addUserCourseIfAccessible(CachedAccessSettingRule rule, Map<String, Integer> userProfile,
+            List<Map<String, Object>> userCourses) {
+        Map<String, Object> contextData = rule.getContextData();
+        if (contextData == null || !contextData.containsKey(Constants.ACCESS_CONTROL_ID)) {
+            log.warn("No accessControl found in rule: {}", rule.getCacheKey());
+            return;
+        }
+        Map<String, Object> accessSettingIdMap =
+                (Map<String, Object>) contextData.get(Constants.ACCESS_CONTROL_ID);
+
+        if (evaluateAccessSettingRule(accessSettingIdMap, userProfile)) {
+            List<String> fieldsToFetch = Arrays.asList(contentReadFields.split(","));
+            Map<String, Object> contentDetails =
+                    contentService.readContent(rule.getContextId(), fieldsToFetch);
+            // --- Begin custom logic for courseUnits ---
+            if (contentDetails != null &&
+                    Constants.COURSE_CATEGORY_COMPREHENSIVE_ASSESSMENT_PROGRAM.equals(contentDetails.get(Constants.COURSE_CATEGORY)) &&
+                    contentDetails.get(Constants.CHILD_NODES) instanceof List &&
+                    contentDetails.get(Constants.LEAF_NODES) instanceof List) {
+                List<String> childNodes = (List<String>) contentDetails.get(Constants.CHILD_NODES);
+                List<String> leafNodes = (List<String>) contentDetails.get(Constants.LEAF_NODES);
+                Set<String> leafSet = new HashSet<>(leafNodes);
+                List<String> courseUnits = childNodes.stream()
+                        .filter(child -> !leafSet.contains(child))
+                        .toList();
+                contentDetails.put(Constants.COURSE_UNITS, courseUnits);
+                contentDetails.put(Constants.END_DATE_CAMEL, contentDetails.get(Constants.END_DATE_CAMEL));
+            }
+            // --- End custom logic for courseUnits ---
+            userCourses.add(contentDetails);
+        }
     }
 
     public Map<String, Object> fetchAccessSettingsEnabledCoursesForCategory(String courseCategory) {
@@ -388,6 +417,15 @@ public class CourseAccessServiceImpl {
         if (initialContent != null) {
             allContent.addAll(initialContent);
         }
+        fetchRemainingPages(reqBody, req, totalCount, allContent);
+        result.put(Constants.CONTENT, allContent);
+        log.info("Successfully fetched all {} items across multiple pages", allContent.size());
+        return compositeSearchRes;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void fetchRemainingPages(Map<String, Object> reqBody, Map<String, Object> req, int totalCount,
+            List<Map<String, Object>> allContent) {
         int currentOffset = searchLimit;
         while (currentOffset < totalCount) {
             req.put(Constants.OFFSET, currentOffset);
@@ -407,9 +445,6 @@ public class CourseAccessServiceImpl {
             }
             currentOffset += searchLimit;
         }
-        result.put(Constants.CONTENT, allContent);
-        log.info("Successfully fetched all {} items across multiple pages", allContent.size());
-        return compositeSearchRes;
     }
 
     private List<String> getCoursesFromCacheOrService(String courseCategory) {
@@ -417,12 +452,10 @@ public class CourseAccessServiceImpl {
             String redisKey = "access_settings_enabled_" + courseCategory;
             String cachedData = redisCacheMgr.getFromCache(redisKey);
             if (StringUtils.hasText(cachedData)) {
-                try {
-                    List<String> cachedCourses = mapper.readValue(cachedData, new TypeReference<List<String>>() {});
+                List<String> cachedCourses = readCachedCourseList(cachedData, courseCategory);
+                if (cachedCourses != null) {
                     log.info("Redis cache hit for category: {}", courseCategory);
                     return cachedCourses;
-                } catch (Exception e) {
-                    log.error("Failed to parse cached course list from Redis for category {}: {}", courseCategory, e.getMessage(), e);
                 }
             }
 
@@ -430,21 +463,7 @@ public class CourseAccessServiceImpl {
             Map<String, Object> fetchedCourses = fetchAccessSettingsEnabledCoursesForCategory(courseCategory);
 
             if (MapUtils.isNotEmpty(fetchedCourses)) {
-                List<String> identifiers = new ArrayList<>();
-                try {
-                    Map<String, Object> result = (Map<String, Object>) fetchedCourses.get(Constants.RESULT);
-                    if (result != null && result.containsKey(Constants.CONTENT)) {
-                        List<Map<String, Object>> contentList = (List<Map<String, Object>>) result.get(Constants.CONTENT);
-                        if (contentList != null) {
-                            identifiers = contentList.stream()
-                                    .map(item -> (String) item.get(Constants.IDENTIFIER))
-                                    .filter(Objects::nonNull)
-                                    .collect(Collectors.toList());
-                        }
-                    }
-                } catch (Exception e) {
-                    log.error("Error extracting identifiers for category {}: {}", courseCategory, e.getMessage(), e);
-                }
+                List<String> identifiers = extractIdentifiers(fetchedCourses, courseCategory);
                 if (!identifiers.isEmpty()) {
                     redisCacheMgr.putInCache(redisKey, mapper.writeValueAsString(identifiers), accessCacheTtlSecods);
                     log.info("Cached {} course identifiers for category {} in Redis", identifiers.size(), courseCategory);
@@ -461,11 +480,40 @@ public class CourseAccessServiceImpl {
         return Collections.emptyList();
     }
 
+    private List<String> readCachedCourseList(String cachedData, String courseCategory) {
+        try {
+            return mapper.readValue(cachedData, new TypeReference<List<String>>() {});
+        } catch (Exception e) {
+            log.error("Failed to parse cached course list from Redis for category {}: {}", courseCategory, e.getMessage(), e);
+            return null;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> extractIdentifiers(Map<String, Object> fetchedCourses, String courseCategory) {
+        List<String> identifiers = new ArrayList<>();
+        try {
+            Map<String, Object> result = (Map<String, Object>) fetchedCourses.get(Constants.RESULT);
+            if (result != null && result.containsKey(Constants.CONTENT)) {
+                List<Map<String, Object>> contentList = (List<Map<String, Object>>) result.get(Constants.CONTENT);
+                if (contentList != null) {
+                    identifiers = contentList.stream()
+                            .map(item -> (String) item.get(Constants.IDENTIFIER))
+                            .filter(Objects::nonNull)
+                            .toList();
+                }
+            }
+        } catch (Exception e) {
+            log.error("Error extracting identifiers for category {}: {}", courseCategory, e.getMessage(), e);
+        }
+        return identifiers;
+    }
+
     private List<Map<String, Object>> fetchFromRedisCache(String redisKey) {
         log.info("Fetching data from Redis cache for key: {}", redisKey);
         String cachedData = redisCacheMgr.getFromCache(redisKey);
         if (!StringUtils.hasText(cachedData)) {
-            return null;
+            return Collections.emptyList();
         }
         try {
             return mapper.readValue(
@@ -474,20 +522,20 @@ public class CourseAccessServiceImpl {
             );
         } catch (JsonProcessingException e) {
             log.error("Failed parsing cached redis data for key {}: {}", redisKey, e.getMessage());
-            return null;
+            return Collections.emptyList();
         }
     }
 
     public ApiResponse getAssignedExternalCoursesForUser(Map<String,Object> request,String authToken) {
         log.info("CourseAccessServiceImpl::getAssignedCoursesForUser:inside");
-        ApiResponse response = ApiResponse.createDefaultResponse("api.courseAccess.getCoursesForUser");
+        ApiResponse response = ApiResponse.createDefaultResponse(API_COURSE_ACCESS_GET_COURSES_FOR_USER);
         try {
             String userId = accessTokenValidator.fetchUserIdFromAccessToken(authToken, response);
             if (!StringUtils.hasText(userId)) {
                 return response;
             }
             if (MapUtils.isEmpty(request)) {
-                String errMsg = "Request body is null or empty";
+                String errMsg = REQUEST_BODY_NULL_OR_EMPTY;
                 log.error(errMsg);
                 response.updateErrorDetails(errMsg, HttpStatus.BAD_REQUEST);
                 return response;
@@ -512,13 +560,7 @@ public class CourseAccessServiceImpl {
             }
 
             Map<String, Integer> userProfile = userProfileServiceImpl.getUserProfile(userId);
-            List<CachedAccessSettingRule> rules = new ArrayList<>();
-            for (String courseId : courseIds) {
-                CachedAccessSettingRule rule = accessSettingRuleCacheMgr.getOrLoadAccessSettingRule(courseId, Constants.EXTERNAL_COURSES);
-                if (rule != null) {
-                    rules.add(rule);
-                }
-            }
+            List<CachedAccessSettingRule> rules = loadAccessSettingRules(courseIds, Constants.EXTERNAL_COURSES);
             List<Map<String, Object>> userCourses = new ArrayList<>();
             if (rules.isEmpty()) {
                 log.warn("No access setting rules found for External Courses");
@@ -526,24 +568,7 @@ public class CourseAccessServiceImpl {
                 return response;
             }
             for (CachedAccessSettingRule rule : rules) {
-                Map<String, Object> contextData = rule.getContextData();
-                if (MapUtils.isNotEmpty(contextData) || contextData.containsKey(Constants.ACCESS_CONTROL_ID)) {
-                    Map<String, Object> accessSettingIdMap =
-                            (Map<String, Object>) contextData.get(Constants.ACCESS_CONTROL_ID);
-
-                    if (evaluateAccessSettingRule(accessSettingIdMap, userProfile)) {
-                        List<String> fieldsToFetch = new ArrayList<>();
-                        Map<String, Object> contentDetails =
-                                contentService.readContent(rule.getContextId(), fieldsToFetch);
-                        Object contentObj = contentDetails.get("content");
-                        Map<String, Object> externalCourse = mapper.convertValue(
-                                contentObj,
-                                new TypeReference<Map<String, Object>>() {
-                                }
-                        );
-                        userCourses.add(externalCourse);
-                    }
-                }
+                addExternalUserCourseIfAccessible(rule, userProfile, userCourses);
             }
             log.info("AccessSettingRule evaluation: UserId: {} | Courses retrieved: {}", userId, userCourses.size());
             redisCacheMgr.putInCache(Constants.ACCESS_KEY+partnerId+Constants.UNDERSCORE+userId, mapper.writeValueAsString(userCourses));
@@ -553,6 +578,29 @@ public class CourseAccessServiceImpl {
             response.updateErrorDetails("Rule evaluation failed due to an error", HttpStatus.INTERNAL_SERVER_ERROR);
         }
         return response;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void addExternalUserCourseIfAccessible(CachedAccessSettingRule rule, Map<String, Integer> userProfile,
+            List<Map<String, Object>> userCourses) {
+        Map<String, Object> contextData = rule.getContextData();
+        if (MapUtils.isNotEmpty(contextData) || contextData.containsKey(Constants.ACCESS_CONTROL_ID)) {
+            Map<String, Object> accessSettingIdMap =
+                    (Map<String, Object>) contextData.get(Constants.ACCESS_CONTROL_ID);
+
+            if (evaluateAccessSettingRule(accessSettingIdMap, userProfile)) {
+                List<String> fieldsToFetch = new ArrayList<>();
+                Map<String, Object> contentDetails =
+                        contentService.readContent(rule.getContextId(), fieldsToFetch);
+                Object contentObj = contentDetails.get("content");
+                Map<String, Object> externalCourse = mapper.convertValue(
+                        contentObj,
+                        new TypeReference<Map<String, Object>>() {
+                        }
+                );
+                userCourses.add(externalCourse);
+            }
+        }
     }
 
     private List<String> getCoursesFromCacheOrServiceForExternalCourse(String partnerId) {
@@ -654,7 +702,7 @@ public class CourseAccessServiceImpl {
     }
 
         private Map<String, Object> buildPersonalContentInfo(String userId, String orgId, String authToken) throws Exception {
-            List<String> aparIds = new ArrayList<>();;
+            List<String> aparIds = new ArrayList<>();
             List<String> trainingPlanIds = new ArrayList<>();
             List<String> aiCbpIds = new ArrayList<>();
             ApiResponse cbPlanResponse = cbPlanLearnerService.getCBPlanListForUser(orgId, userId, true);
@@ -668,19 +716,19 @@ public class CourseAccessServiceImpl {
                             .filter(p -> Boolean.TRUE.equals(p.get(Constants.IS_APAR)))
                             .flatMap(p -> ((List<Map<String, Object>>) p.get(CONTENT_LIST)).stream())
                             .map(content -> (String) content.get(Constants.IDENTIFIER))
-                            .collect(Collectors.toList());
+                            .toList();
                      aiCbpIds = plans.stream()
                             .filter(p -> !Boolean.TRUE.equals(p.get(Constants.IS_APAR)))
                             .filter(p -> Constants.PLAN_TYPE_AI_CBP.equalsIgnoreCase(String.valueOf(p.get(Constants.PLAN_TYPE))))
                             .flatMap(p -> ((List<Map<String, Object>>) p.get(CONTENT_LIST)).stream())
                             .map(content -> (String) content.get(Constants.IDENTIFIER))
-                            .collect(Collectors.toList());
+                            .toList();
                      trainingPlanIds = plans.stream()
                             .filter(p -> !Boolean.TRUE.equals(p.get(Constants.IS_APAR)))
                             .filter(p -> !Constants.PLAN_TYPE_AI_CBP.equalsIgnoreCase(String.valueOf(p.get(Constants.PLAN_TYPE))))
                             .flatMap(p -> ((List<Map<String, Object>>) p.get(CONTENT_LIST)).stream())
                             .map(content -> (String) content.get(Constants.IDENTIFIER))
-                            .collect(Collectors.toList());
+                            .toList();
                 }
             }
             java.util.List<String> learningPathwayIds = getAssignedCourseCount(userId, Constants.LEARNING_PATHWAY, authToken);
@@ -713,10 +761,10 @@ public class CourseAccessServiceImpl {
                     getModeratedContentIdentifiers(userId, orgId);
 
             List<String> moderatedContentIds =
-                    (List<String>) moderatedContent.get("identifiers");
+                    (List<String>) moderatedContent.get(IDENTIFIERS_KEY);
 
             Object moderatedContentCount =
-                    moderatedContent.get("count");
+                    moderatedContent.get(COUNT_KEY);
 
             map.put(MODERATED_CONTENT, moderatedContentCount);
             contentIds.put(MODERATED_CONTENT, moderatedContentIds);
@@ -792,13 +840,13 @@ public class CourseAccessServiceImpl {
                         response.getResult().get(Constants.CONTENT);
                 return courses.stream()
                         .map(course -> (String) course.get(Constants.IDENTIFIER))
-                        .collect(Collectors.toList());
+                        .toList();
             }
         } catch (Exception e) {
             log.error("Error fetching count for courseCategory: {}, userId: {}, error: {}",
                     courseCategory, userId, e.getMessage());
         }
-        return Collections.EMPTY_LIST;
+        return Collections.emptyList();
     }
 
     private Map<String, Object> getModeratedCourseIdentifiers(
@@ -825,11 +873,11 @@ public class CourseAccessServiceImpl {
 
             Map<String, Object> profileDetails = null;
 
-            if (profileDetailsObject instanceof String
-                    && StringUtils.hasText((String) profileDetailsObject)) {
+            if (profileDetailsObject instanceof String profileDetailsStr
+                    && StringUtils.hasText(profileDetailsStr)) {
 
                 profileDetails = objectMapper.readValue(
-                        (String) profileDetailsObject,
+                        profileDetailsStr,
                         new TypeReference<Map<String, Object>>() {});
             }
 
@@ -874,17 +922,17 @@ public class CourseAccessServiceImpl {
                     List<String> identifiers = contents.stream()
                             .map(content ->
                                     (String) content.get(Constants.IDENTIFIER))
-                            .collect(Collectors.toList());
+                            .toList();
 
-                    response.put("identifiers", identifiers);
-                    response.put("count", result.get("count"));
+                    response.put(IDENTIFIERS_KEY, identifiers);
+                    response.put(COUNT_KEY, result.get(COUNT_KEY));
 
                     return response;
                 }
             }
 
-            response.put("identifiers", Collections.emptyList());
-            response.put("count", 0);
+            response.put(IDENTIFIERS_KEY, Collections.emptyList());
+            response.put(COUNT_KEY, 0);
 
             return response;
 
@@ -894,8 +942,8 @@ public class CourseAccessServiceImpl {
                     orgId, e);
 
             Map<String, Object> response = new HashMap<>();
-            response.put("identifiers", Collections.emptyList());
-            response.put("count", 0);
+            response.put(IDENTIFIERS_KEY, Collections.emptyList());
+            response.put(COUNT_KEY, 0);
 
             return response;
         }
@@ -926,64 +974,6 @@ public class CourseAccessServiceImpl {
         return (Map<String, Map<String, Object>>) result.get(Constants.RESPONSE);
     }
 
-    private boolean isActiveInProgress(Map<String, Object> enrolment) {
-        Number status = (Number) enrolment.get(Constants.STATUS);
-
-        return Boolean.TRUE.equals(enrolment.get(Constants.ACTIVE))
-                && status != null
-                && (status.intValue() == 0 || status.intValue() == 1);
-    }
-
-    private List<String> getStandaloneAssessmentIdentifiers(
-            Map<String, Map<String, Object>> enrolmentDictionary) {
-
-        List<String> assessments = getStandaloneAssessmentIdentifiersFromSystem();
-
-        if (CollectionUtils.isEmpty(assessments)) {
-            return Collections.emptyList();
-        }
-
-        List<String> identifiers = new ArrayList<>();
-
-        for (String identifier : assessments) {
-
-            Map<String, Object> enrolment = enrolmentDictionary.get(identifier);
-
-            if (enrolment == null) {
-                identifiers.add(identifier);
-                continue;
-            }
-
-            if (!isNotCompleted(enrolment)) {
-                continue;
-            }
-
-            if (!isBatchEndDateValid(enrolment)) {
-                continue;
-            }
-
-            identifiers.add(identifier);
-        }
-
-        return identifiers;
-    }
-
-    private boolean isBatchEndDateValid(Map<String, Object> enrolment) {
-        Object batchEndDate = enrolment.get(BATCH_END_DATE);
-
-        if (batchEndDate == null) {
-            return true;
-        }
-
-        LocalDate endDate = LocalDate.parse(batchEndDate.toString());
-        return !endDate.isBefore(LocalDate.now());
-    }
-
-    private boolean isNotCompleted(Map<String, Object> enrolment) {
-        Object status = enrolment.get(Constants.STATUS);
-        return status != null && Integer.parseInt(status.toString()) != 2;
-    }
-
     private List<String> getFilteredCaProgramIdentifiers(
             String userId,
             String authToken,
@@ -1012,29 +1002,10 @@ public class CourseAccessServiceImpl {
             List<String> identifiers = new ArrayList<>();
 
             for (Map<String, Object> course : assignedCourses) {
-
                 String identifier = (String) course.get(Constants.IDENTIFIER);
-                String endDate = (String) course.get(END_DATE_KEY);
-
-                Map<String, Object> enrolment = enrolmentDictionary.get(identifier);
-
-                if (!StringUtils.hasText(endDate)) {
+                if (isCaProgramIdentifierEligible(course, identifier, today, enrolmentDictionary)) {
                     identifiers.add(identifier);
-                    continue;
                 }
-
-                LocalDate contentEndDate = LocalDate.parse(endDate);
-
-
-                if (contentEndDate.isBefore(today)) {
-                    continue;
-                }
-
-                if (enrolment != null && isCompleted(enrolment)) {
-                    continue;
-                }
-
-                identifiers.add(identifier);
             }
 
             return identifiers;
@@ -1044,6 +1015,25 @@ public class CourseAccessServiceImpl {
                     userId, e.getMessage(), e);
             return Collections.emptyList();
         }
+    }
+
+    private boolean isCaProgramIdentifierEligible(Map<String, Object> course, String identifier, LocalDate today,
+            Map<String, Map<String, Object>> enrolmentDictionary) {
+        String endDate = (String) course.get(END_DATE_KEY);
+
+        Map<String, Object> enrolment = enrolmentDictionary.get(identifier);
+
+        if (!StringUtils.hasText(endDate)) {
+            return true;
+        }
+
+        LocalDate contentEndDate = LocalDate.parse(endDate);
+
+        if (contentEndDate.isBefore(today)) {
+            return false;
+        }
+
+        return enrolment == null || !isCompleted(enrolment);
     }
 
     private List<String> getStandaloneAssessmentIdentifiersFromSystem() {
@@ -1070,7 +1060,7 @@ public class CourseAccessServiceImpl {
 
                     return contents.stream()
                             .map(content -> (String) content.get(Constants.IDENTIFIER))
-                            .collect(Collectors.toList());
+                            .toList();
                 }
             }
 
@@ -1154,20 +1144,24 @@ public class CourseAccessServiceImpl {
             Map<String, Object> enrollment =
                     enrollmentDictionary.get(identifier);
 
-            if (MapUtils.isEmpty(enrollment)) {
-                continue;
-            }
-
-            if (isCompleted(enrollment)) {
-                continue;
-            }
-
-            if (isBatchEndDateValidForStandalone(enrollment)) {
+            if (isEligibleStandaloneAssessment(enrollment)) {
                 identifiers.add(identifier);
             }
         }
 
         return identifiers;
+    }
+
+    private boolean isEligibleStandaloneAssessment(Map<String, Object> enrollment) {
+        if (MapUtils.isEmpty(enrollment)) {
+            return false;
+        }
+
+        if (isCompleted(enrollment)) {
+            return false;
+        }
+
+        return isBatchEndDateValidForStandalone(enrollment);
     }
 
     private boolean isCompleted(Map<String, Object> enrollment) {
@@ -1181,12 +1175,12 @@ public class CourseAccessServiceImpl {
                 enrollment.get("completionPercentage");
 
         boolean completedByStatus =
-                statusObj instanceof Number
-                        && ((Number) statusObj).intValue() == 2;
+                statusObj instanceof Number number
+                        && number.intValue() == 2;
 
         boolean completedByPercentage =
-                completionPercentageObj instanceof Number
-                        && ((Number) completionPercentageObj).intValue() == 100;
+                completionPercentageObj instanceof Number number
+                        && number.intValue() == 100;
 
         return completedByStatus || completedByPercentage;
     }
@@ -1220,27 +1214,29 @@ public class CourseAccessServiceImpl {
         LocalDate today = LocalDate.now();
 
         for (Map<String, Object> batch : batches) {
-
-            if (MapUtils.isEmpty(batch)) {
-                continue;
-            }
-
-            Object endDateObj = batch.get("endDate");
-
-            if (!(endDateObj instanceof String)
-                    || !StringUtils.hasText((String) endDateObj)) {
-                continue;
-            }
-
-            LocalDate endDate =
-                    LocalDate.parse((String) endDateObj);
-
-            if (!endDate.isBefore(today)) {
+            if (isFutureBatchEndDate(batch, today)) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private boolean isFutureBatchEndDate(Map<String, Object> batch, LocalDate today) {
+        if (MapUtils.isEmpty(batch)) {
+            return false;
+        }
+
+        Object endDateObj = batch.get("endDate");
+
+        if (!(endDateObj instanceof String endDateStr)
+                || !StringUtils.hasText(endDateStr)) {
+            return false;
+        }
+
+        LocalDate endDate = LocalDate.parse(endDateStr);
+
+        return !endDate.isBefore(today);
     }
 
 }

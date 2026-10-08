@@ -11,12 +11,13 @@ import java.util.Locale;
 @Component
 public class SecretKeySpec implements KeySpec, SecretKey {
     private static final long serialVersionUID = 6577238317307289933L;
+    private static final String TRIPLE_DES = "TripleDES";
     private byte[] key;
     private String algorithm;
 
     @PostConstruct
     public void postConstruct() {
-        this.key = (byte[]) Constants.CIPHER_KEY.clone();
+        this.key = Constants.CIPHER_KEY.clone();
         this.algorithm = Constants.CIPHER_ALGORITHM;
     }
 
@@ -29,7 +30,7 @@ public class SecretKeySpec implements KeySpec, SecretKey {
     }
 
     public byte[] getEncoded() {
-        return (byte[]) this.key.clone();
+        return this.key.clone();
     }
 
     public int hashCode() {
@@ -39,21 +40,21 @@ public class SecretKeySpec implements KeySpec, SecretKey {
             retval += this.key[i] * i;
         }
 
-        return this.algorithm.equalsIgnoreCase("TripleDES") ? retval ^ "desede".hashCode()
+        return this.algorithm.equalsIgnoreCase(TRIPLE_DES) ? retval ^ "desede".hashCode()
                 : retval ^ this.algorithm.toLowerCase(Locale.ENGLISH).hashCode();
     }
 
     public boolean equals(Object obj) {
         if (this == obj) {
             return true;
-        } else if (!(obj instanceof SecretKey)) {
+        } else if (!(obj instanceof SecretKey secretKey)) {
             return false;
         } else {
-            String thatAlg = ((SecretKey) obj).getAlgorithm();
+            String thatAlg = secretKey.getAlgorithm();
             if (thatAlg.equalsIgnoreCase(this.algorithm)
-                    || thatAlg.equalsIgnoreCase("DESede") && this.algorithm.equalsIgnoreCase("TripleDES")
-                    || thatAlg.equalsIgnoreCase("TripleDES") && this.algorithm.equalsIgnoreCase("DESede")) {
-                byte[] thatKey = ((SecretKey) obj).getEncoded();
+                    || thatAlg.equalsIgnoreCase("DESede") && this.algorithm.equalsIgnoreCase(TRIPLE_DES)
+                    || thatAlg.equalsIgnoreCase(TRIPLE_DES) && this.algorithm.equalsIgnoreCase("DESede")) {
+                byte[] thatKey = secretKey.getEncoded();
                 return MessageDigest.isEqual(this.key, thatKey);
             } else {
                 return false;

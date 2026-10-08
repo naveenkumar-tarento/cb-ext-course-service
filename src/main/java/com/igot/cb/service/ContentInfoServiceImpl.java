@@ -211,11 +211,10 @@ public class ContentInfoServiceImpl {
         url.append(propertiesCache.getProperty(Constants.CONTENT_SERVICE_HOST))
                 .append(propertiesCache.getProperty(Constants.CONTENT_RETIRE_END_POINT)).append("/" + contentId);
 
-        Map<String, Object> response = (Map<String, Object>) outboundRequestHandlerService
+        Map<String, Object> response = outboundRequestHandlerService
                 .fetchResultUsingDelete(url.toString(), new HashMap<>(), new HashMap<>());
         if (null != response && Constants.OK.equalsIgnoreCase((String) response.get(Constants.RESPONSE_CODE))) {
-            Map<String, Object> contentResult = (Map<String, Object>) response.get(Constants.RESULT);
-            return contentResult;
+            return (Map<String, Object>) response.get(Constants.RESULT);
         }
         return Collections.emptyMap();
     }

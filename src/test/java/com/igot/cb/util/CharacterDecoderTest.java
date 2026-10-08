@@ -1,10 +1,7 @@
 package com.igot.cb.util;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Timeout;
 import java.io.*;
-import java.nio.ByteBuffer;
-import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CharacterDecoderTest {
@@ -45,7 +42,7 @@ class CharacterDecoderTest {
     }
 
     @Test
-    void testDecodeLinePrefix() throws IOException {
+    void testDecodeLinePrefix() {
         TestCharacterDecoder decoder = new TestCharacterDecoder();
         PushbackInputStream inputStream = new PushbackInputStream(new ByteArrayInputStream("test".getBytes()));
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
@@ -88,7 +85,7 @@ class CharacterDecoderTest {
     }
 
     @Test
-    void testDecodeBufferPrefix() throws IOException {
+    void testDecodeBufferPrefix() {
         TestCharacterDecoder decoder = new TestCharacterDecoder();
         PushbackInputStream inputStream = new PushbackInputStream(new ByteArrayInputStream("test".getBytes()));
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
@@ -97,7 +94,7 @@ class CharacterDecoderTest {
     }
 
     @Test
-    void testDecodeBufferSuffix() throws IOException {
+    void testDecodeBufferSuffix() {
         TestCharacterDecoder decoder = new TestCharacterDecoder();
         PushbackInputStream inputStream = new PushbackInputStream(new ByteArrayInputStream("test".getBytes()));
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
@@ -106,7 +103,7 @@ class CharacterDecoderTest {
     }
 
     @Test
-    void testDecodeLineSuffix() throws IOException {
+    void testDecodeLineSuffix() {
         TestCharacterDecoder decoder = new TestCharacterDecoder();
         PushbackInputStream inputStream = new PushbackInputStream(new ByteArrayInputStream("test".getBytes()));
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();

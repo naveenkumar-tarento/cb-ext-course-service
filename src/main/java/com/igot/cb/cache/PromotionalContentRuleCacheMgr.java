@@ -241,7 +241,7 @@ public class PromotionalContentRuleCacheMgr {
             }
             try {
                 bitSet.set(part);
-            } catch (Throwable ex) {
+            } catch (Exception ex) {
                 log.error("Failed to set the bit map position for value: {}", part, ex);
             }
         }

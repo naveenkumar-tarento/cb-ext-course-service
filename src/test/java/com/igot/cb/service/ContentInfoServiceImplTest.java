@@ -169,7 +169,7 @@ class ContentInfoServiceImplTest {
     }
 
     @Test
-    void testReadContent_cacheThrowsException_returnsEmpty() throws Exception {
+    void testReadContent_cacheThrowsException_returnsEmpty() {
         when(redisCacheMgr.getFromCache("cid")).thenReturn("invalid-json");
         Map<String, Object> result = contentService.readContent("cid", List.of("name"));
         assertTrue(result.isEmpty());

@@ -37,14 +37,14 @@ import org.springframework.web.client.RestTemplate;
  * @author Ruksana
  */
 @ExtendWith(MockitoExtension.class)
-public class CbExtCourseServiceApplicationTest {
+class CbExtCourseServiceApplicationTest {
 
   @InjectMocks
   private CbExtCourseServiceApplication application;
 
 
   @Test
-  public void testMainMethod() {
+  void testMainMethod() {
     // Testing the main method using MockedStatic
     try (MockedStatic<SpringApplication> mockedStatic = Mockito.mockStatic(SpringApplication.class)) {
       // Arrange and Act

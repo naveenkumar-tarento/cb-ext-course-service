@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.*;
@@ -16,7 +15,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class OutboundRequestHandlerServiceImplTest {
@@ -88,8 +86,6 @@ class OutboundRequestHandlerServiceImplTest {
     private TestRestTemplate testRestTemplate;
     private OutboundRequestHandlerServiceImpl outboundService;
     private ObjectMapper objectMapper;
-
-    private Map<String, Object> patchForObjectResponse;
 
     @BeforeEach
     void setup() throws Exception {
@@ -238,26 +234,12 @@ class OutboundRequestHandlerServiceImplTest {
 
     @Test
     void testFetchResult_GenericException_WithNonNullResponse() {
-        String uri = "http://test.com/api";
-        
-        testRestTemplate.setExceptionToThrow(new RuntimeException("Connection error"));
-
-        Object result = outboundService.fetchResult(uri);
-
-        assertNull(result);
+        testFetchResult_GenericException();
     }
 
     @Test
     void testFetchResultUsingExchange_GenericException_WithNonNullResponse() {
-        String uri = "http://test.com/api";
-        ParameterizedTypeReference<Map<String, Object>> typeRef = 
-            new ParameterizedTypeReference<Map<String, Object>>() {};
-
-        testRestTemplate.setExceptionToThrow(new RuntimeException("Connection error"));
-
-        Map<String, Object> result = outboundService.fetchResultUsingExchange(uri, typeRef);
-
-        assertNull(result);
+        testFetchResultUsingExchange_GenericException();
     }
 
     @Test

@@ -4,6 +4,9 @@ import com.igot.cb.util.Constants;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -34,7 +37,7 @@ class DecryptServiceImplTest {
     }
 
     @Test
-    void testPostConstruct_Success() throws Exception {
+    void testPostConstruct_Success() {
         SecretKeySpec secretKeySpec = new SecretKeySpec(Constants.CIPHER_KEY, Constants.CIPHER_ALGORITHM);
         ReflectionTestUtils.setField(decryptService, "secretKeySpec", secretKeySpec);
         
@@ -56,27 +59,11 @@ class DecryptServiceImplTest {
         });
     }
 
-    @Test
-    void testDecryptStringWithNullInput() {
-        String result = decryptService.decryptString(null);
-        assertNull(result);
-    }
-
-    @Test
-    void testDecryptStringWithEmptyInput() {
-        String result = decryptService.decryptString("");
-        assertNull(result);
-    }
-
-    @Test
-    void testDecryptStringWithInvalidInput() {
-        String result = decryptService.decryptString("invalid_encrypted_string");
-        assertNull(result);
-    }
-
-    @Test
-    void testDecryptStringException() {
-        String result = decryptService.decryptString("test@#$%");
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {"invalid_encrypted_string", "test@#$%", "  invalid  "})
+    void testDecryptString_ReturnsNullForInvalidInput(String input) {
+        String result = decryptService.decryptString(input);
         assertNull(result);
     }
 
@@ -96,12 +83,6 @@ class DecryptServiceImplTest {
         // This will likely fail decryption but will exercise the success path code
         String result = decryptService.decryptString(testInput);
         // The result will be null due to decryption failure, but we've covered the success path
-        assertNull(result);
-    }
-
-    @Test
-    void testDecryptString_WithWhitespace() {
-        String result = decryptService.decryptString("  invalid  ");
         assertNull(result);
     }
 
