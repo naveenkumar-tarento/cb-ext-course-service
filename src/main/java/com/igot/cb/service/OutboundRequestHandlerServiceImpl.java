@@ -66,14 +66,18 @@ public class OutboundRequestHandlerServiceImpl {
 			}
 			log.error(ERROR_RECEIVED + e.getResponseBodyAsString(), e);
 		} catch (Exception e) {
-			log.error(FAILED_TO_CALL_REST_URL, uri, e);
-			try {
-				log.warn(ERROR_RESPONSE + objectMapper.writeValueAsString(response));
-			} catch (Exception e1) {
-				log.debug(FAILED_TO_PARSE_ERROR_RESPONSE, e1);
-			}
+			logUnexpectedError(uri, e, response);
 		}
 		return response;
+	}
+
+	private void logUnexpectedError(String uri, Exception e, Object response) {
+		log.error(FAILED_TO_CALL_REST_URL, uri, e);
+		try {
+			log.warn(ERROR_RESPONSE + objectMapper.writeValueAsString(response));
+		} catch (Exception e1) {
+			log.debug(FAILED_TO_PARSE_ERROR_RESPONSE, e1);
+		}
 	}
 
 	public <T> T fetchResultUsingExchange(String uri, ParameterizedTypeReference<T> responseType) {
@@ -98,12 +102,7 @@ public class OutboundRequestHandlerServiceImpl {
 			}
 			log.error(ERROR_RECEIVED + e.getResponseBodyAsString(), e);
 		} catch (Exception e) {
-			log.error(FAILED_TO_CALL_REST_URL, uri, e);
-			try {
-				log.warn(ERROR_RESPONSE + objectMapper.writeValueAsString(response));
-			} catch (Exception e1) {
-				log.debug(FAILED_TO_PARSE_ERROR_RESPONSE, e1);
-			}
+			logUnexpectedError(uri, e, response);
 		}
 		return null;
 	}
@@ -149,19 +148,7 @@ public class OutboundRequestHandlerServiceImpl {
         mapper.configure(SerializationFeature.FAIL_ON_EMPTY_BEANS, false);
         Map<String, Object> response = null;
         try {
-            HttpHeaders headers = new HttpHeaders();
-            if (!CollectionUtils.isEmpty(headersValues)) {
-                headersValues.forEach(headers::set);
-            }
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            HttpEntity<Object> entity = new HttpEntity<>(request, headers);
-            if (log.isDebugEnabled()) {
-                StringBuilder str = new StringBuilder(this.getClass().getCanonicalName()).append(".fetchResult")
-                        .append(System.lineSeparator());
-                str.append(Constants.URI_CONSTANT).append(uri).append(System.lineSeparator());
-                str.append("Request: ").append(mapper.writeValueAsString(request)).append(System.lineSeparator());
-                log.debug(str.toString());
-            }
+            HttpEntity<Object> entity = buildEntityAndLogDebug(".fetchResult", uri, request, headersValues, mapper);
             response = restTemplate.postForObject(uri, entity, Map.class);
             if (log.isDebugEnabled()) {
                 StringBuilder str = new StringBuilder("Response: ");
@@ -209,22 +196,7 @@ public class OutboundRequestHandlerServiceImpl {
         Map<String, Object> response = null;
 
         try {
-            HttpHeaders headers = new HttpHeaders();
-            if (!CollectionUtils.isEmpty(headersValues)) {
-                headersValues.forEach(headers::set);
-            }
-            headers.setContentType(MediaType.APPLICATION_JSON);
-
-            HttpEntity<Object> entity = new HttpEntity<>(request, headers);
-
-            if (log.isDebugEnabled()) {
-                StringBuilder str = new StringBuilder(this.getClass().getCanonicalName())
-                        .append(".fetchResultUsingDelete")
-                        .append(System.lineSeparator());
-                str.append(Constants.URI_CONSTANT).append(uri).append(System.lineSeparator());
-                str.append("Request: ").append(mapper.writeValueAsString(request)).append(System.lineSeparator());
-                log.debug(str.toString());
-            }
+            HttpEntity<Object> entity = buildEntityAndLogDebug(".fetchResultUsingDelete", uri, request, headersValues, mapper);
 
             ResponseEntity<Map<String, Object>> responseEntity = restTemplate.exchange(
                     uri,
@@ -240,25 +212,9 @@ public class OutboundRequestHandlerServiceImpl {
             }
 
         } catch (HttpStatusCodeException hce) {
-
-            try {
-                response = new ObjectMapper().readValue(
-                        hce.getResponseBodyAsString(),
-                        new TypeReference<HashMap<String, Object>>() {}
-                );
-            } catch (Exception e1) {
-                log.debug(FAILED_TO_PARSE_ERROR_RESPONSE_WITH_BODY, hce.getResponseBodyAsString(), e1);
-            }
-
-            log.error("Error received: {}", hce.getResponseBodyAsString(), hce);
-
+            response = parseErrorResponseBody(hce, new ObjectMapper());
         } catch (Exception e) {
-            log.error("Failed to call DELETE URL: {}", uri, e);
-            try {
-                log.warn("Error Response: {}", mapper.writeValueAsString(response));
-            } catch (Exception e1) {
-                log.debug("Failed to parse error response", e1);
-            }
+            logHttpOperationFailure("DELETE", uri, e, response, mapper);
         }
 
         return response;
@@ -301,29 +257,54 @@ public class OutboundRequestHandlerServiceImpl {
 			}
 
 		} catch (HttpStatusCodeException hce) {
-
-			try {
-				response = mapper.readValue(
-						hce.getResponseBodyAsString(),
-						new TypeReference<HashMap<String, Object>>() {
-						});
-			} catch (Exception e1) {
-				log.debug(FAILED_TO_PARSE_ERROR_RESPONSE_WITH_BODY, hce.getResponseBodyAsString(), e1);
-			}
-
-			log.error("Error received: {}", hce.getResponseBodyAsString(), hce);
-
+			response = parseErrorResponseBody(hce, mapper);
 		} catch (Exception e) {
-
-			log.error("Failed to call GET URL: {}", uri, e);
-
-			try {
-				log.warn("Error Response: {}", mapper.writeValueAsString(response));
-			} catch (Exception e1) {
-				log.debug("Failed to parse error response", e1);
-			}
+			logHttpOperationFailure("GET", uri, e, response, mapper);
 		}
 
 		return response == null ? MapUtils.EMPTY_MAP : response;
+	}
+
+	private HttpEntity<Object> buildEntityAndLogDebug(String methodLabel, String uri, Object request,
+			Map<String, String> headersValues, ObjectMapper mapper) throws JsonProcessingException {
+		HttpHeaders headers = new HttpHeaders();
+		if (!CollectionUtils.isEmpty(headersValues)) {
+			headersValues.forEach(headers::set);
+		}
+		headers.setContentType(MediaType.APPLICATION_JSON);
+		HttpEntity<Object> entity = new HttpEntity<>(request, headers);
+		if (log.isDebugEnabled()) {
+			StringBuilder str = new StringBuilder(this.getClass().getCanonicalName())
+					.append(methodLabel)
+					.append(System.lineSeparator());
+			str.append(Constants.URI_CONSTANT).append(uri).append(System.lineSeparator());
+			str.append("Request: ").append(mapper.writeValueAsString(request)).append(System.lineSeparator());
+			log.debug(str.toString());
+		}
+		return entity;
+	}
+
+	private Map<String, Object> parseErrorResponseBody(HttpStatusCodeException hce, ObjectMapper mapperToUse) {
+		Map<String, Object> parsed = null;
+		try {
+			parsed = mapperToUse.readValue(
+					hce.getResponseBodyAsString(),
+					new TypeReference<HashMap<String, Object>>() {}
+			);
+		} catch (Exception e1) {
+			log.debug(FAILED_TO_PARSE_ERROR_RESPONSE_WITH_BODY, hce.getResponseBodyAsString(), e1);
+		}
+		log.error("Error received: {}", hce.getResponseBodyAsString(), hce);
+		return parsed;
+	}
+
+	private void logHttpOperationFailure(String operation, String uri, Exception e, Map<String, Object> response,
+			ObjectMapper mapper) {
+		log.error("Failed to call " + operation + " URL: {}", uri, e);
+		try {
+			log.warn("Error Response: {}", mapper.writeValueAsString(response));
+		} catch (Exception e1) {
+			log.debug("Failed to parse error response", e1);
+		}
 	}
 }

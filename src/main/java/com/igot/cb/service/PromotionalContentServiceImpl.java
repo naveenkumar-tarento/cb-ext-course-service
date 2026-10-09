@@ -18,7 +18,6 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.util.CollectionUtils;
 
 import java.util.*;
 import static com.igot.cb.util.ProjectUtil.setFailedResponse;
@@ -267,42 +266,7 @@ public class PromotionalContentServiceImpl implements IPromotionalContentService
      */
     private boolean evaluateAccessSettingRule(Map<String, Object> accessSettingIdMap,
                                               Map<String, Integer> userProfile) {
-        if (MapUtils.isEmpty(accessSettingIdMap) || MapUtils.isEmpty(userProfile)) {
-            log.error("Access setting ID map or user profile is empty");
-            return false;
-        }
-        List<Map<String, Object>> userGroups = (List<Map<String, Object>>) accessSettingIdMap
-                .get(Constants.USER_GROUPS);
-        if (CollectionUtils.isEmpty(userGroups)) {
-            return false;
-        }
-        for (Map<String, Object> userGroup : userGroups) {
-            String userGroupId = (String) userGroup.get(Constants.USER_GROUP_ID);
-            boolean isUserHasAccess = false;
-            List<Map<String, Object>> criteriaList = (List<Map<String, Object>>) userGroup
-                    .get(Constants.USER_GROUP_CRITERIA_LIST);
-            if (CollectionUtils.isEmpty(criteriaList)) {
-                return true;
-            }
-            for (Map<String, Object> criteria : criteriaList) {
-                String criteriaKey = criteria.get(Constants.CRITERIA_KEY).toString().toLowerCase();
-                BitSet criteriaValue = (BitSet) criteria.get(Constants.CRITERIA_VALUE);
-                Integer userCriteriaValue = userProfile.get(criteriaKey);
-                if (userCriteriaValue == null || !criteriaValue.get(userCriteriaValue)) {
-                    log.info("User profile does not contain criteria key: {} in userGroup: {}", criteriaKey,
-                            userGroupId);
-                    isUserHasAccess = false;
-                    break;
-                } else {
-                    isUserHasAccess = true;
-                }
-            }
-            if (isUserHasAccess) {
-                log.info("User profile does matches all criteria in userGroup: {}", userGroupId);
-                return true;
-            }
-        }
-        return false;
+        return CourseAccessServiceImpl.evaluateAccessSettingRuleShared(accessSettingIdMap, userProfile, true, log);
     }
 
     /**

@@ -159,8 +159,18 @@ public class AccessSettingRuleCacheMgr {
 
 
 
-    @SuppressWarnings("unchecked")
     private void processContextData(String cacheKey, Map<String, Object> contextData) {
+        processContextDataShared(cacheKey, contextData, userGroup -> processUserGroup(cacheKey, userGroup), log);
+    }
+
+    /**
+     * Shared with PromotionalContentRuleCacheMgr, whose contextData shape and processing
+     * rules are identical; only how each userGroup is subsequently handled differs.
+     */
+    @SuppressWarnings("unchecked")
+    static void processContextDataShared(String cacheKey, Map<String, Object> contextData,
+                                          java.util.function.Consumer<Map<String, Object>> userGroupHandler,
+                                          org.slf4j.Logger log) {
         Map<String, Object> accessControl = (Map<String, Object>) contextData.get(Constants.ACCESS_CONTROL_ID);
         if (accessControl == null) {
             log.warn("No accessControl found for rule: {}", cacheKey);
@@ -175,7 +185,7 @@ public class AccessSettingRuleCacheMgr {
         }
 
         for (Map<String, Object> userGroup : userGroups) {
-            processUserGroup(cacheKey, userGroup);
+            userGroupHandler.accept(userGroup);
         }
     }
 
@@ -222,6 +232,13 @@ public class AccessSettingRuleCacheMgr {
     }
 
     private Integer parseCriteriaValue(String val, String criteriaKey, String cacheKey) {
+        return parseCriteriaValueShared(val, criteriaKey, cacheKey, log);
+    }
+
+    /**
+     * Shared with PromotionalContentRuleCacheMgr, which parses criteria values identically.
+     */
+    static Integer parseCriteriaValueShared(String val, String criteriaKey, String cacheKey, org.slf4j.Logger log) {
         try {
             int parsedVal = Integer.parseInt(val);
             if (parsedVal < 0 || parsedVal > Constants.MAX_BITSET_INDEX) {
@@ -236,9 +253,14 @@ public class AccessSettingRuleCacheMgr {
         }
     }
 
-
-
     BitSet createBitSetForAttribute(Collection<Integer> attributeValues) {
+        return createBitSetForAttributeShared(attributeValues, log);
+    }
+
+    /**
+     * Shared with PromotionalContentRuleCacheMgr, which builds BitSets identically.
+     */
+    static BitSet createBitSetForAttributeShared(Collection<Integer> attributeValues, org.slf4j.Logger log) {
         BitSet bitSet = new BitSet();
         if (org.apache.commons.collections4.CollectionUtils.isEmpty(attributeValues)) {
             return bitSet;

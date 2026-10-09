@@ -149,22 +149,9 @@ public class PromotionalContentRuleCacheMgr {
     /**
      * Processes context data by extracting access control and user groups.
      */
-    @SuppressWarnings("unchecked")
     private void processContextData(String cacheKey, Map<String, Object> contextData) {
-        Map<String, Object> accessControl = (Map<String, Object>) contextData.get(Constants.ACCESS_CONTROL_ID);
-        if (accessControl == null) {
-            log.warn("No accessControl found for rule: {}", cacheKey);
-            return;
-        }
-        List<Map<String, Object>> userGroups =
-                (List<Map<String, Object>>) accessControl.get(Constants.USER_GROUPS);
-        if (userGroups == null || userGroups.isEmpty()) {
-            log.warn("No userGroups found for rule: {}", cacheKey);
-            return;
-        }
-        for (Map<String, Object> userGroup : userGroups) {
-            processUserGroup(userGroup, cacheKey);
-        }
+        AccessSettingRuleCacheMgr.processContextDataShared(cacheKey, contextData,
+                userGroup -> processUserGroup(userGroup, cacheKey), log);
     }
 
     /**
@@ -211,18 +198,7 @@ public class PromotionalContentRuleCacheMgr {
      * Parses a string to Integer, returns null if parsing fails or value is out of bounds.
      */
     private Integer parseIntegerValue(String val, String criteriaKey, String cacheKey) {
-        try {
-            int parsedVal = Integer.parseInt(val);
-            if (parsedVal < 0 || parsedVal > Constants.MAX_BITSET_INDEX) {
-                log.warn("Criteria value '{}' for key {} in rule {} is out of valid BitSet range [0, {}] - skipping to avoid heap exhaustion",
-                        val, criteriaKey, cacheKey, Constants.MAX_BITSET_INDEX);
-                return null;
-            }
-            return parsedVal;
-        } catch (NumberFormatException e) {
-            log.warn("Non-integer criteria value '{}' for key {} in rule {}", val, criteriaKey, cacheKey);
-            return null;
-        }
+        return AccessSettingRuleCacheMgr.parseCriteriaValueShared(val, criteriaKey, cacheKey, log);
     }
 
     /**
@@ -230,21 +206,6 @@ public class PromotionalContentRuleCacheMgr {
      * Example: [1, 3, 5] creates BitSet with bits 1, 3, 5 set to true.
      */
     BitSet createBitSetForAttribute(Collection<Integer> attributeValues) {
-        BitSet bitSet = new BitSet();
-        if (CollectionUtils.isEmpty(attributeValues)) {
-            return bitSet;
-        }
-        for (Integer part : attributeValues) {
-            if (part == null || part < 0 || part > Constants.MAX_BITSET_INDEX) {
-                log.warn("Skipping invalid or out-of-range bit index: {}", part);
-                continue;
-            }
-            try {
-                bitSet.set(part);
-            } catch (Exception ex) {
-                log.error("Failed to set the bit map position for value: {}", part, ex);
-            }
-        }
-        return bitSet;
+        return AccessSettingRuleCacheMgr.createBitSetForAttributeShared(attributeValues, log);
     }
 }

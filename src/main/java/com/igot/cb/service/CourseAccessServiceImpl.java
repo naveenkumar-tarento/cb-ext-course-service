@@ -232,9 +232,20 @@ public class CourseAccessServiceImpl {
         return true;
     }
 
-    @SuppressWarnings("unchecked")
     private boolean evaluateAccessSettingRule(Map<String, Object> accessSettingIdMap,
             Map<String, Integer> userProfile) {
+        return evaluateAccessSettingRuleShared(accessSettingIdMap, userProfile, false, log);
+    }
+
+    /**
+     * Shared with PromotionalContentServiceImpl, whose rule-matching logic is identical
+     * except for whether an empty criteria list grants or denies access for that userGroup.
+     */
+    @SuppressWarnings("unchecked")
+    static boolean evaluateAccessSettingRuleShared(Map<String, Object> accessSettingIdMap,
+                                                    Map<String, Integer> userProfile,
+                                                    boolean grantAccessWhenCriteriaListEmpty,
+                                                    org.slf4j.Logger log) {
         if (MapUtils.isEmpty(accessSettingIdMap) || MapUtils.isEmpty(userProfile)) {
             log.error("Access setting ID map or user profile is empty");
             return false;
@@ -246,33 +257,44 @@ public class CourseAccessServiceImpl {
         }
 
         for (Map<String, Object> userGroup : userGroups) {
-            String userGroupId = (String) userGroup.get(Constants.USER_GROUP_ID);
-            boolean isUserHasAccess = false;
             List<Map<String, Object>> criteriaList = (List<Map<String, Object>>) userGroup
                     .get(Constants.USER_GROUP_CRITERIA_LIST);
             if (CollectionUtils.isEmpty(criteriaList)) {
+                if (grantAccessWhenCriteriaListEmpty) {
+                    return true;
+                }
                 break;
             }
-            for (Map<String, Object> criteria : criteriaList) {
-                String criteriaKey = criteria.get(Constants.CRITERIA_KEY).toString().toLowerCase();
-                BitSet criteriaValue = (BitSet) criteria.get(Constants.CRITERIA_VALUE);
-                Integer userCriteriaValue = userProfile.get(criteriaKey);
-                if (userCriteriaValue == null || !criteriaValue.get(userCriteriaValue)) {
-                    log.info("User profile does not contain criteria key: {} in userGroup: {}", criteriaKey,
-                            userGroupId);
-                    isUserHasAccess = false;
-                    break;
-                } else {
-                    isUserHasAccess = true;
-                }
-            }
-
-            if (isUserHasAccess) {
-                log.info("User profile does matches all criteria in userGroup: {}", userGroupId);
+            if (userGroupMatchesAllCriteria(userGroup, criteriaList, userProfile, log)) {
                 return true;
             }
         }
         return false;
+    }
+
+    private static boolean userGroupMatchesAllCriteria(Map<String, Object> userGroup,
+                                                         List<Map<String, Object>> criteriaList,
+                                                         Map<String, Integer> userProfile,
+                                                         org.slf4j.Logger log) {
+        String userGroupId = (String) userGroup.get(Constants.USER_GROUP_ID);
+        boolean isUserHasAccess = false;
+        for (Map<String, Object> criteria : criteriaList) {
+            String criteriaKey = criteria.get(Constants.CRITERIA_KEY).toString().toLowerCase();
+            BitSet criteriaValue = (BitSet) criteria.get(Constants.CRITERIA_VALUE);
+            Integer userCriteriaValue = userProfile.get(criteriaKey);
+            if (userCriteriaValue == null || !criteriaValue.get(userCriteriaValue)) {
+                log.info("User profile does not contain criteria key: {} in userGroup: {}", criteriaKey,
+                        userGroupId);
+                isUserHasAccess = false;
+                break;
+            } else {
+                isUserHasAccess = true;
+            }
+        }
+        if (isUserHasAccess) {
+            log.info("User profile does matches all criteria in userGroup: {}", userGroupId);
+        }
+        return isUserHasAccess;
     }
 
     public ApiResponse getAssignedCoursesForUser(Map<String, Object> request, String authToken) {
