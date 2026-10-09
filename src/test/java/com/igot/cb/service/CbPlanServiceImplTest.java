@@ -317,7 +317,7 @@ class CbPlanServiceImplTest {
 
         when(contentService.readContent(anyString(), any())).thenReturn(createMockContent());
 
-        ApiResponse response = cbPlanService.readCbPlan("planId", "orgId", "token");
+        ApiResponse response = cbPlanService.readCbPlan("planId", "orgId");
 
         assertNotNull(response);
     }
@@ -327,14 +327,14 @@ class CbPlanServiceImplTest {
         SearchCriteria criteria = new SearchCriteria();
         when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("");
 
-        ApiResponse response = cbPlanService.searchCbPlan(criteria, "orgId", "token");
+        ApiResponse response = cbPlanService.searchCbPlan(criteria, "token");
 
         assertNotNull(response);
     }
 
     @SuppressWarnings("unchecked")
     @Test
-    void testSearchCbPlan_WithResults() throws Exception {
+    void testSearchCbPlan_WithResults() {
         SearchCriteria criteria = new SearchCriteria();
         criteria.setQuery(new HashMap<>());
         criteria.setFilter(new HashMap<>());
@@ -359,7 +359,7 @@ class CbPlanServiceImplTest {
         }).when(userUtilityService).readUserProfileFromDB(any(), anyList());
 
         try {
-        ApiResponse response = cbPlanService.searchCbPlan(criteria, "orgId", "token");
+        ApiResponse response = cbPlanService.searchCbPlan(criteria, "token");
         assertNotNull(response);
         assertEquals(Constants.SUCCESS, response.getParams().getStatus());
         } catch (Exception e) {
@@ -1312,7 +1312,7 @@ class CbPlanServiceImplTest {
 
     @Test
     @Disabled("This test is ignored due to optimization code changes")
-    void testSearchCbPlan_NoResults() throws Exception {
+    void testSearchCbPlan_NoResults() {
         SearchCriteria criteria = new SearchCriteria();
 
         when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("userId");
@@ -1321,7 +1321,7 @@ class CbPlanServiceImplTest {
         searchResult.setData(new ArrayList<>());
         when(esUtilService.searchDocuments(anyString(), any(), anyString())).thenReturn(searchResult);
 
-        ApiResponse response = cbPlanService.searchCbPlan(criteria, "orgId", "token");
+        ApiResponse response = cbPlanService.searchCbPlan(criteria, "token");
 
         assertNotNull(response);
         assertEquals(Constants.SUCCESS, response.getParams().getStatus());
@@ -1545,7 +1545,7 @@ class CbPlanServiceImplTest {
         when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), any(), any(), any()))
             .thenReturn(new ArrayList<>());
 
-        ApiResponse response = cbPlanService.readCbPlan("planId", "orgId", "token");
+        ApiResponse response = cbPlanService.readCbPlan("planId", "orgId");
 
         assertEquals(Constants.FAILED, response.getParams().getStatus());
         assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
@@ -1565,21 +1565,21 @@ class CbPlanServiceImplTest {
         when(contentService.readContent(anyString(), any()))
             .thenThrow(new RuntimeException("Content service error"));
 
-        ApiResponse response = cbPlanService.readCbPlan("planId", "orgId", "token");
+        ApiResponse response = cbPlanService.readCbPlan("planId", "orgId");
 
         assertEquals(Constants.FAILED, response.getParams().getStatus());
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
     }
 
     @Test
-    void testSearchCbPlan_Exception() throws Exception {
+    void testSearchCbPlan_Exception() {
         SearchCriteria criteria = new SearchCriteria();
         when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("userId");
         when(esUtilService.searchDocuments(anyString(), any(), anyString()))
             .thenThrow(new RuntimeException("Test exception"));
 
         try {
-            cbPlanService.searchCbPlan(criteria, "orgId", "token");
+            cbPlanService.searchCbPlan(criteria, "token");
             fail("Expected CustomException to be thrown");
         } catch (Exception e) {
             assertTrue(e.getMessage().contains("error while processing"));
@@ -1657,20 +1657,20 @@ class CbPlanServiceImplTest {
     }
 
     @Test
-    void testSearchCbPlan_ExceptionPath() throws Exception {
+    void testSearchCbPlan_ExceptionPath() {
         when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("u1");
         when(esUtilService.searchDocuments(anyString(), any(), anyString())).thenThrow(new RuntimeException("boom"));
         SearchCriteria sc = new SearchCriteria();
-        assertThrows(RuntimeException.class, () -> cbPlanService.searchCbPlan(sc, "org", "t"));
+        assertThrows(RuntimeException.class, () -> cbPlanService.searchCbPlan(sc, "t"));
     }
 
     @Test
     void testReadCbPlan_EmptyAndErrorPaths() {
-        ApiResponse r1 = cbPlanService.readCbPlan("", "org", "t");
+        ApiResponse r1 = cbPlanService.readCbPlan("", "org");
         assertEquals(HttpStatus.BAD_REQUEST, r1.getResponseCode());
         when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), anyMap(), any(), any()))
                 .thenThrow(new RuntimeException("fail"));
-        ApiResponse r2 = cbPlanService.readCbPlan("id", "org", "t");
+        ApiResponse r2 = cbPlanService.readCbPlan("id", "org");
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, r2.getResponseCode());
     }
 
@@ -2582,10 +2582,11 @@ class CbPlanServiceImplTest {
         when(requestValidator.validateContextData(any(), anyBoolean(), anyString(), any(), anyBoolean()))
             .thenReturn(List.of("ctx-error"));
 
+        CbPlanServiceImpl.PublishRequestContext ctx = new CbPlanServiceImpl.PublishRequestContext(existingCbPlan,
+            incomingRequest, updatedRequest, Constants.LIVE, false, "org1", false, rootOrgIdsInCriteria,
+            existingRootOrgIdsInCriteria, "plan1");
         List<String> errors = (List<String>) ReflectionTestUtils.invokeMethod(cbPlanService,
-            "prepareAndValidatePublishRequest", existingCbPlan, incomingRequest, updatedRequest,
-            Constants.LIVE, false, "org1", "user1", false, rootOrgIdsInCriteria, existingRootOrgIdsInCriteria,
-            "plan1", response);
+            "prepareAndValidatePublishRequest", ctx, response);
 
         assertEquals(List.of("ctx-error"), errors);
         assertTrue(updatedRequest.containsKey(Constants.CONTEXT_DATA_REQUEST));
@@ -2607,10 +2608,11 @@ class CbPlanServiceImplTest {
         when(requestValidator.validateContextData(any(), anyBoolean(), anyString(), any(), anyBoolean()))
             .thenReturn(List.of("should-not-be-used"));
 
+        CbPlanServiceImpl.PublishRequestContext ctx = new CbPlanServiceImpl.PublishRequestContext(existingCbPlan,
+            incomingRequest, updatedRequest, Constants.LIVE, false, "org1", false, rootOrgIdsInCriteria,
+            existingRootOrgIdsInCriteria, "plan1");
         List<String> errors = (List<String>) ReflectionTestUtils.invokeMethod(cbPlanService,
-            "prepareAndValidatePublishRequest", existingCbPlan, incomingRequest, updatedRequest,
-            Constants.LIVE, false, "org1", "user1", false, rootOrgIdsInCriteria, existingRootOrgIdsInCriteria,
-            "plan1", response);
+            "prepareAndValidatePublishRequest", ctx, response);
 
         assertTrue(errors.isEmpty());
         assertFalse(updatedRequest.containsKey(Constants.CONTEXT_DATA_REQUEST));
@@ -3131,7 +3133,6 @@ class CbPlanServiceImplTest {
         verify(requestValidator, never()).validateCbPlanCreateRequest(any(), anyBoolean(), anyString(), anyBoolean());
     }
 
-    // ---- createCbPlan: generic Exception caught by the outer catch (line ~145-149) ----
     @Test
     void testCreateCbPlan_ValidatorThrowsRuntimeException_CaughtByGenericCatch() {
         ApiRequest request = new ApiRequest();
@@ -3152,7 +3153,6 @@ class CbPlanServiceImplTest {
         assertEquals("boom", response.getParams().getErr());
     }
 
-    // ---- insertCbPlanAndRespond: catch(JsonProcessingException) branch (line ~183-187) ----
     @Test
     void testCreateCbPlan_ContextDataSerializationThrows_CaughtAsJsonProcessingException() {
         ApiRequest request = new ApiRequest();
@@ -3529,14 +3529,13 @@ class CbPlanServiceImplTest {
         searchResult.setData(new ArrayList<>());
         when(esUtilService.searchDocuments(eq("cb_plan_idx"), any(), eq("json/path"))).thenReturn(searchResult);
 
-        ApiResponse response = cbPlanService.searchCbPlan(criteria, "orgId", "token");
+        ApiResponse response = cbPlanService.searchCbPlan(criteria, "token");
 
         assertNotNull(response);
         assertFalse(response.containsKey(Constants.RESULT));
         verify(contentService, never()).enrichContentInfoForCBPlan(any());
     }
 
-    // ---- handleUpdateOfLiveCbPlan: catch(JsonProcessingException) when draft serialization fails (line ~1263-1267) ----
     @Test
     void testHandleUpdateOfLiveCbPlan_SerializationFails_CaughtAsJsonProcessingException() {
         ApiResponse response = new ApiResponse();

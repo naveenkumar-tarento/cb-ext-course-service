@@ -80,6 +80,8 @@ public class AccessSettingMigrationServiceImpl {
         return response;
     }
 
+    private record AssignmentInfo(String type, List<String> info) {}
+
     public ApiResponse migrateCBPlanAccessSettingRules() {
         ApiResponse response = ApiResponse.createDefaultResponse("migrateCBPlanAccessSettingRules");
         AtomicInteger migrated = new AtomicInteger();
@@ -90,85 +92,8 @@ public class AccessSettingMigrationServiceImpl {
                     Constants.KEYSPACE_SUNBIRD, Constants.CB_PLAN_TABLE, null,
                     null, null);
 
-            String assignmentType=null;
-            List<String> assignmentTypeInfo=null;
-            
             for (Map<String, Object> cbPlanMap : cbPlanListMap) {
-                String status = String.valueOf(cbPlanMap.get(Constants.STATUS));
-                Map<String, Object> cbPlanV2Map = new HashMap<>();
-                if (status.equalsIgnoreCase(Constants.DRAFT)) {
-                    String draftDataJson = (String) cbPlanMap.get(Constants.DRAFT_DATA);
-                    if (draftDataJson != null && !draftDataJson.isEmpty()) {
-                        try {
-                            Map<String, Object> draftData = objectMapper.readValue(draftDataJson, Map.class);
-                            cbPlanV2Map.put(Constants.NAME, draftData.get(Constants.NAME));
-                            String endDateString = (String) draftData.get(Constants.END_DATE_KEY);
-                            if (endDateString != null) {
-                                parseToInstant(endDateString, cbPlanV2Map);
-                            }
-                            List<String> contentList = (List<String>) draftData.get(Constants.CONTENT_LIST);
-                            cbPlanV2Map.put(Constants.CONTENT_LIST, contentList != null ? contentList : new ArrayList<>());
-                            cbPlanV2Map.put(Constants.CONTENT_TYPE, draftData.get(Constants.CONTENT_TYPE));
-                            assignmentType = (String) draftData.get(Constants.ASSIGNMENT_TYPE);
-                            assignmentTypeInfo = (List<String>) draftData.get(Constants.ASSIGNMENT_TYPE_INFO);
-                            cbPlanV2Map.put(Constants.STATUS, cbPlanMap.get(Constants.STATUS).toString().toLowerCase());
-
-                        } catch (Exception e) {
-                            log.error("Error deserializing draftData JSON: {}", e.getMessage());
-                        }
-                    }
-                } else {
-                    cbPlanV2Map.put(Constants.STATUS, (String) cbPlanMap.get(Constants.STATUS));
-                    cbPlanV2Map.put(Constants.NAME, (String) cbPlanMap.get(Constants.NAME));
-                    cbPlanV2Map.put(Constants.END_DATE_KEY, (Instant) cbPlanMap.get(Constants.END_DATE_KEY));
-                    cbPlanV2Map.put(Constants.CONTENT_LIST, (List<String>) cbPlanMap.get(Constants.CONTENT_LIST));
-                    cbPlanV2Map.put(Constants.CONTENT_TYPE, (String) cbPlanMap.get(Constants.CONTENT_TYPE));
-                    assignmentType = (String) cbPlanMap.get(Constants.ASSIGNMENT_TYPE);
-                    assignmentTypeInfo = (List<String>) cbPlanMap.get(Constants.ASSIGNMENT_TYPE_INFO);
-                }
-
-                String orgId = (String) cbPlanMap.get(Constants.ORG_ID);
-                String cbPlanId = String.valueOf(cbPlanMap.get(Constants.ID));
-
-                cbPlanV2Map.put(Constants.PLAN_ID, cbPlanId);
-                cbPlanV2Map.put(Constants.ORG_SCOPE, Constants.SINGLE);
-                cbPlanV2Map.put(Constants.ORG_ID_LIST, Collections.singletonList(orgId));
-                cbPlanV2Map.put(Constants.CREATED_AT, (Instant) cbPlanMap.get(Constants.CREATED_AT_KEY));
-                cbPlanV2Map.put(Constants.CREATED_BY, (String) cbPlanMap.get(Constants.CREATED_BY));
-
-                Boolean isApar = (Boolean) cbPlanMap.get(Constants.IS_APAR);
-                cbPlanV2Map.put(Constants.IS_APAR, isApar != null ? isApar : Boolean.FALSE);
-
-                cbPlanV2Map.put(Constants.PUBLISHED_AT, (Instant) cbPlanMap.get(Constants.PUBLISHED_AT_KEY));
-                cbPlanV2Map.put(Constants.PUBLISHED_BY, (String) cbPlanMap.get(Constants.CB_PUBLISHED_BY));
-                cbPlanV2Map.put(Constants.COMMENT, (String) cbPlanMap.get(Constants.COMMENT));
-                cbPlanV2Map.put(Constants.UPDATED_AT, (Instant) cbPlanMap.get(Constants.UPDATED_AT));
-                cbPlanV2Map.put(Constants.UPDATED_BY, (String) cbPlanMap.get(Constants.UPDATED_BY));
-
-                String contextData = buildContextData(orgId, assignmentType, assignmentTypeInfo);
-                if (!StringUtils.hasLength(contextData)) {
-                    skipped.incrementAndGet();
-                    errors.add("planId=" + cbPlanId + ", error = Failed to build context data");
-                    log.error("Failed to build context data for planId: {}", cbPlanId);
-                    continue;
-                }
-                cbPlanV2Map.put(Constants.CONTEXT_DATA, contextData);
-                ApiResponse dbResponse = (ApiResponse) cassandraOperation.insertRecord(Constants.KEYSPACE_SUNBIRD,
-                        Constants.TABLE_CB_PLAN_V2, cbPlanV2Map);
-                if (Constants.SUCCESS.equalsIgnoreCase((String) dbResponse.get(Constants.RESPONSE))) {
-                    cbPlanV2Map.put(Constants.ID, cbPlanId);
-                    Map<String, Object> sanitizedMap = sanitizeForElastic(cbPlanV2Map);
-                    esUtilService.addDocument(cpPlanIndex, Constants.INDEX_TYPE, cbPlanId, sanitizedMap, elasticCbPlanJsonPath);
-                    insertPlanToLookUpTable(String.valueOf(cbPlanMap.get(Constants.ID)),
-                            String.valueOf(cbPlanMap.get(Constants.ORG_ID)),
-                            (Instant) cbPlanMap.get(Constants.END_DATE_KEY), String.valueOf(cbPlanMap.get(Constants.STATUS)));
-                    migrated.incrementAndGet();
-                } else {
-                    skipped.incrementAndGet();
-                    errors.add("planId=" + cbPlanId + ", error = " + dbResponse.get(Constants.ERROR_MESSAGE));
-                    log.error("Error occurred while inserting record into CB Plan V2 table: {}", dbResponse.get(Constants.ERROR_MESSAGE));
-                }
-
+                migrateSingleCbPlan(cbPlanMap, migrated, skipped, errors);
             }
         } catch (Exception e) {
             log.error("Error occurred while migrating access setting rules: {}", e.getMessage(), e);
@@ -179,6 +104,95 @@ public class AccessSettingMigrationServiceImpl {
         response.getResult().put("Skipped", skipped.get());
         response.getResult().put("Errors", errors);
         return response;
+    }
+
+    private void migrateSingleCbPlan(Map<String, Object> cbPlanMap, AtomicInteger migrated, AtomicInteger skipped,
+                                      List<String> errors) throws JsonProcessingException {
+        String status = String.valueOf(cbPlanMap.get(Constants.STATUS));
+        Map<String, Object> cbPlanV2Map = new HashMap<>();
+        AssignmentInfo assignmentInfo = status.equalsIgnoreCase(Constants.DRAFT)
+                ? populateFromDraftData(cbPlanMap, cbPlanV2Map)
+                : populateFromExistingCbPlan(cbPlanMap, cbPlanV2Map);
+
+        String orgId = (String) cbPlanMap.get(Constants.ORG_ID);
+        String cbPlanId = String.valueOf(cbPlanMap.get(Constants.ID));
+
+        cbPlanV2Map.put(Constants.PLAN_ID, cbPlanId);
+        cbPlanV2Map.put(Constants.ORG_SCOPE, Constants.SINGLE);
+        cbPlanV2Map.put(Constants.ORG_ID_LIST, Collections.singletonList(orgId));
+        cbPlanV2Map.put(Constants.CREATED_AT, cbPlanMap.get(Constants.CREATED_AT_KEY));
+        cbPlanV2Map.put(Constants.CREATED_BY, cbPlanMap.get(Constants.CREATED_BY));
+
+        Boolean isApar = (Boolean) cbPlanMap.get(Constants.IS_APAR);
+        cbPlanV2Map.put(Constants.IS_APAR, isApar != null ? isApar : Boolean.FALSE);
+
+        cbPlanV2Map.put(Constants.PUBLISHED_AT, cbPlanMap.get(Constants.PUBLISHED_AT_KEY));
+        cbPlanV2Map.put(Constants.PUBLISHED_BY, cbPlanMap.get(Constants.CB_PUBLISHED_BY));
+        cbPlanV2Map.put(Constants.COMMENT, cbPlanMap.get(Constants.COMMENT));
+        cbPlanV2Map.put(Constants.UPDATED_AT, cbPlanMap.get(Constants.UPDATED_AT));
+        cbPlanV2Map.put(Constants.UPDATED_BY, cbPlanMap.get(Constants.UPDATED_BY));
+
+        String contextData = buildContextData(orgId, assignmentInfo.type(), assignmentInfo.info());
+        if (!StringUtils.hasLength(contextData)) {
+            skipped.incrementAndGet();
+            errors.add("planId=" + cbPlanId + ", error = Failed to build context data");
+            log.error("Failed to build context data for planId: {}", cbPlanId);
+            return;
+        }
+        cbPlanV2Map.put(Constants.CONTEXT_DATA, contextData);
+        ApiResponse dbResponse = (ApiResponse) cassandraOperation.insertRecord(Constants.KEYSPACE_SUNBIRD,
+                Constants.TABLE_CB_PLAN_V2, cbPlanV2Map);
+        if (Constants.SUCCESS.equalsIgnoreCase((String) dbResponse.get(Constants.RESPONSE))) {
+            cbPlanV2Map.put(Constants.ID, cbPlanId);
+            Map<String, Object> sanitizedMap = sanitizeForElastic(cbPlanV2Map);
+            esUtilService.addDocument(cpPlanIndex, Constants.INDEX_TYPE, cbPlanId, sanitizedMap, elasticCbPlanJsonPath);
+            insertPlanToLookUpTable(String.valueOf(cbPlanMap.get(Constants.ID)),
+                    String.valueOf(cbPlanMap.get(Constants.ORG_ID)),
+                    (Instant) cbPlanMap.get(Constants.END_DATE_KEY), String.valueOf(cbPlanMap.get(Constants.STATUS)));
+            migrated.incrementAndGet();
+        } else {
+            skipped.incrementAndGet();
+            errors.add("planId=" + cbPlanId + ", error = " + dbResponse.get(Constants.ERROR_MESSAGE));
+            log.error("Error occurred while inserting record into CB Plan V2 table: {}", dbResponse.get(Constants.ERROR_MESSAGE));
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private AssignmentInfo populateFromDraftData(Map<String, Object> cbPlanMap, Map<String, Object> cbPlanV2Map) {
+        String assignmentType = null;
+        List<String> assignmentTypeInfo = null;
+        String draftDataJson = (String) cbPlanMap.get(Constants.DRAFT_DATA);
+        if (draftDataJson != null && !draftDataJson.isEmpty()) {
+            try {
+                Map<String, Object> draftData = objectMapper.readValue(draftDataJson, Map.class);
+                cbPlanV2Map.put(Constants.NAME, draftData.get(Constants.NAME));
+                String endDateString = (String) draftData.get(Constants.END_DATE_KEY);
+                if (endDateString != null) {
+                    parseToInstant(endDateString, cbPlanV2Map);
+                }
+                List<String> contentList = (List<String>) draftData.get(Constants.CONTENT_LIST);
+                cbPlanV2Map.put(Constants.CONTENT_LIST, contentList != null ? contentList : new ArrayList<>());
+                cbPlanV2Map.put(Constants.CONTENT_TYPE, draftData.get(Constants.CONTENT_TYPE));
+                assignmentType = (String) draftData.get(Constants.ASSIGNMENT_TYPE);
+                assignmentTypeInfo = (List<String>) draftData.get(Constants.ASSIGNMENT_TYPE_INFO);
+                cbPlanV2Map.put(Constants.STATUS, cbPlanMap.get(Constants.STATUS).toString().toLowerCase());
+            } catch (Exception e) {
+                log.error("Error deserializing draftData JSON: {}", e.getMessage());
+            }
+        }
+        return new AssignmentInfo(assignmentType, assignmentTypeInfo);
+    }
+
+    @SuppressWarnings("unchecked")
+    private AssignmentInfo populateFromExistingCbPlan(Map<String, Object> cbPlanMap, Map<String, Object> cbPlanV2Map) {
+        cbPlanV2Map.put(Constants.STATUS, cbPlanMap.get(Constants.STATUS));
+        cbPlanV2Map.put(Constants.NAME, cbPlanMap.get(Constants.NAME));
+        cbPlanV2Map.put(Constants.END_DATE_KEY, cbPlanMap.get(Constants.END_DATE_KEY));
+        cbPlanV2Map.put(Constants.CONTENT_LIST, cbPlanMap.get(Constants.CONTENT_LIST));
+        cbPlanV2Map.put(Constants.CONTENT_TYPE, cbPlanMap.get(Constants.CONTENT_TYPE));
+        String assignmentType = (String) cbPlanMap.get(Constants.ASSIGNMENT_TYPE);
+        List<String> assignmentTypeInfo = (List<String>) cbPlanMap.get(Constants.ASSIGNMENT_TYPE_INFO);
+        return new AssignmentInfo(assignmentType, assignmentTypeInfo);
     }
 
     public static Map<String, Object> sanitizeForElastic(Map<String, Object> input) {
@@ -260,61 +274,78 @@ public class AccessSettingMigrationServiceImpl {
         }
 
         for (Map<String, Object> userGroup : userGroupsList) {
-            String userGroupId = (String) userGroup.get(Constants.USER_GROUP_ID);
             Map<String, Object> userGroupIdMap = new HashMap<>();
-            userGroupIdMap.put(Constants.USER_GROUP_ID, userGroupId);
-            userGroupIdMap.put(Constants.USER_GROUP_NAME, userGroup.get(Constants.USER_GROUP_NAME));
-            List<Map<String, Object>> criteriaIdMapList = new ArrayList<>();
-            List<Map<String, Object>> criteriaList = (List<Map<String, Object>>) userGroup
-                    .get(Constants.USER_GROUP_CRITERIA_LIST);
-
-            for (Map<String, Object> criteria : criteriaList) {
-                String criteriaKey = (String) criteria.get(Constants.CRITERIA_KEY);
-                Object criteriaValueObj = criteria.get(Constants.CRITERIA_VALUE);
-
-                List<String> criteriaValues = new ArrayList<>();
-
-                if (criteriaValueObj instanceof List) {
-                    criteriaValues = ((List<?>) criteriaValueObj).stream()
-                            .filter(Objects::nonNull)
-                            .map(Object::toString)
-                            .distinct()
-                            .toList();
-                } else if (criteriaValueObj instanceof Boolean) {
-                    // Handle boolean values safely
-                    criteriaValues = List.of(String.valueOf(criteriaValueObj));
-                } else if (criteriaValueObj instanceof String string) {
-                    // Handle single string case
-                    criteriaValues = List.of(string);
-                }
-
-                if (CollectionUtils.isEmpty(criteriaValues)) {
-                    log.error("Criteria values are missing for criteriaKey: {} in userGroupId: {}", criteriaKey,
-                            userGroupId);
-                    return false;
-                }
-
-                Map<String, Integer> idResultMap = idMapCacheMgr.getId(criteriaValues);
-                if (MapUtils.isEmpty(idResultMap)) {
-                    log.error("Failed to fetch criteria ID for criteriaKey: {} in userGroupId: {}", criteriaKey,
-                            userGroupId);
-                    return false;
-                }
-                if (criteriaValues.size() != idResultMap.size()) {
-                    log.error("Criteria values size mismatch for criteriaKey: {} in userGroupId: {}", criteriaKey,
-                            userGroupId);
-                    return false;
-                }
-                Map<String, Object> criteriaIdMap = new HashMap<>();
-                criteriaIdMap.put(Constants.CRITERIA_KEY, criteriaKey);
-                criteriaIdMap.put(Constants.CRITERIA_VALUE, createBitSetForAttribute(idResultMap.values()));
-
-                criteriaIdMapList.add(criteriaIdMap);
+            if (!buildUserGroupIdMap(userGroup, userGroupIdMap)) {
+                return false;
             }
-            userGroupIdMap.put(Constants.USER_GROUP_CRITERIA_LIST, criteriaIdMapList);
             userGroupIdMapList.add(userGroupIdMap);
         }
         return true;
+    }
+
+    @SuppressWarnings("unchecked")
+    private boolean buildUserGroupIdMap(Map<String, Object> userGroup, Map<String, Object> userGroupIdMap) {
+        String userGroupId = (String) userGroup.get(Constants.USER_GROUP_ID);
+        userGroupIdMap.put(Constants.USER_GROUP_ID, userGroupId);
+        userGroupIdMap.put(Constants.USER_GROUP_NAME, userGroup.get(Constants.USER_GROUP_NAME));
+        List<Map<String, Object>> criteriaList = (List<Map<String, Object>>) userGroup
+                .get(Constants.USER_GROUP_CRITERIA_LIST);
+
+        List<Map<String, Object>> criteriaIdMapList = new ArrayList<>();
+        if (!buildCriteriaIdMapList(criteriaList, userGroupId, criteriaIdMapList)) {
+            return false;
+        }
+        userGroupIdMap.put(Constants.USER_GROUP_CRITERIA_LIST, criteriaIdMapList);
+        return true;
+    }
+
+    private boolean buildCriteriaIdMapList(List<Map<String, Object>> criteriaList, String userGroupId,
+                                            List<Map<String, Object>> criteriaIdMapList) {
+        for (Map<String, Object> criteria : criteriaList) {
+            String criteriaKey = (String) criteria.get(Constants.CRITERIA_KEY);
+            List<String> criteriaValues = extractCriteriaValues(criteria.get(Constants.CRITERIA_VALUE));
+
+            if (CollectionUtils.isEmpty(criteriaValues)) {
+                log.error("Criteria values are missing for criteriaKey: {} in userGroupId: {}", criteriaKey,
+                        userGroupId);
+                return false;
+            }
+
+            Map<String, Integer> idResultMap = idMapCacheMgr.getId(criteriaValues);
+            if (MapUtils.isEmpty(idResultMap)) {
+                log.error("Failed to fetch criteria ID for criteriaKey: {} in userGroupId: {}", criteriaKey,
+                        userGroupId);
+                return false;
+            }
+            if (criteriaValues.size() != idResultMap.size()) {
+                log.error("Criteria values size mismatch for criteriaKey: {} in userGroupId: {}", criteriaKey,
+                        userGroupId);
+                return false;
+            }
+            Map<String, Object> criteriaIdMap = new HashMap<>();
+            criteriaIdMap.put(Constants.CRITERIA_KEY, criteriaKey);
+            criteriaIdMap.put(Constants.CRITERIA_VALUE, createBitSetForAttribute(idResultMap.values()));
+
+            criteriaIdMapList.add(criteriaIdMap);
+        }
+        return true;
+    }
+
+    private List<String> extractCriteriaValues(Object criteriaValueObj) {
+        if (criteriaValueObj instanceof List) {
+            return ((List<?>) criteriaValueObj).stream()
+                    .filter(Objects::nonNull)
+                    .map(Object::toString)
+                    .distinct()
+                    .toList();
+        } else if (criteriaValueObj instanceof Boolean) {
+            // Handle boolean values safely
+            return List.of(String.valueOf(criteriaValueObj));
+        } else if (criteriaValueObj instanceof String string) {
+            // Handle single string case
+            return List.of(string);
+        }
+        return new ArrayList<>();
     }
 
     /**

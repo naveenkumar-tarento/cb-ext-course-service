@@ -35,8 +35,8 @@ class ConstantsTest {
         assertEquals("long", Constants.LONG);
         assertEquals("date", Constants.DATE);
         assertEquals("AES", Constants.CIPHER_ALGORITHM);
-        assertNotNull(Constants.CIPHER_KEY);
-        assertEquals(16, Constants.CIPHER_KEY.length);
+        assertNotNull(Constants.getCipherKey());
+        assertEquals(16, Constants.getCipherKey().length);
         assertEquals("True", Constants.TRUE);
         assertEquals("null", Constants.NULL_STRING);
         assertEquals("VERIFIED", Constants.VERIFIED);

@@ -62,6 +62,7 @@ class ExternalTrainingServiceImplTest {
     void setUp() {
         service = new ExternalTrainingServiceImpl(storageService, serverConfig, kafkaTemplate, cassandraOperation,
                 accessTokenValidator, new ObjectMapper().registerModule(new JavaTimeModule()), userAndOrgService);
+        lenient().when(serverConfig.getLocalBasePath()).thenReturn(Constants.LOCAL_BASE_PATH);
     }
 
     // ===========================

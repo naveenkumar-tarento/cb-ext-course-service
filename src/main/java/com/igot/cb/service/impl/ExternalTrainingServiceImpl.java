@@ -289,7 +289,7 @@ public class ExternalTrainingServiceImpl implements ExternalTrainingService {
             }
 
             storageService.downloadFile(fileName, serverConfig.getExternalTrainingBulkUploadContainerName());
-            Path tmpPath = Paths.get(Constants.LOCAL_BASE_PATH + fileName);
+            Path tmpPath = Paths.get(serverConfig.getLocalBasePath() + fileName);
             ByteArrayResource resource = new ByteArrayResource(Files.readAllBytes(tmpPath));
             HttpHeaders headers = new HttpHeaders();
             headers.add(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"");
@@ -324,7 +324,7 @@ public class ExternalTrainingServiceImpl implements ExternalTrainingService {
     @Override
     public ResponseEntity<Resource> downloadBulkUploadSampleFile() {
         String fileName = serverConfig.getExternalTrainingUserBulkUploadSampleFileName();
-        Path filePath = Paths.get(Constants.LOCAL_BASE_PATH, fileName);
+        Path filePath = Paths.get(serverConfig.getLocalBasePath(), fileName);
         try {
             storageService.downloadFile(fileName, serverConfig.getExternalTrainingBulkUploadContainerName());
             byte[] fileBytes = Files.readAllBytes(filePath);

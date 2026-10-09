@@ -82,7 +82,7 @@ public class CbPlanWithAccessSettings {
             @RequestHeader(Constants.X_AUTH_TOKEN) String token,
             @RequestHeader(Constants.X_AUTH_USER_ORG_ID) String userOrgId) {
 
-        ApiResponse response = cbPlanService.readCbPlan(cbPlanId, userOrgId, token);
+        ApiResponse response = cbPlanService.readCbPlan(cbPlanId, userOrgId);
         return new ResponseEntity<>(response, response.getResponseCode());
     }
 
@@ -99,7 +99,7 @@ public class CbPlanWithAccessSettings {
             @RequestHeader(Constants.X_AUTH_TOKEN) String token,
             @RequestHeader(Constants.X_AUTH_USER_ORG_ID) String userOrgId) {
 
-        ApiResponse response = cbPlanService.searchCbPlan(request, userOrgId, token);
+        ApiResponse response = cbPlanService.searchCbPlan(request, token);
         return new ResponseEntity<>(response, response.getResponseCode());
     }
 

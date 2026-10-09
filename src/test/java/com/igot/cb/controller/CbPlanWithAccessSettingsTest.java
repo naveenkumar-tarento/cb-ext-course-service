@@ -102,7 +102,7 @@ class CbPlanWithAccessSettingsTest {
         content.put(Constants.ID, "plan123");
         mockResponse.getResult().put(Constants.CONTENT, content);
         
-        when(cbPlanService.readCbPlan(anyString(), anyString(), anyString())).thenReturn(mockResponse);
+        when(cbPlanService.readCbPlan(anyString(), anyString())).thenReturn(mockResponse);
 
         ResponseEntity<ApiResponse> response = controller.readCbPlan("plan123", "token", "orgId");
         
@@ -132,7 +132,7 @@ class CbPlanWithAccessSettingsTest {
         mockResponse.getParams().setStatus(Constants.SUCCESS);
         mockResponse.setResponseCode(HttpStatus.OK);
         
-        when(cbPlanService.searchCbPlan(any(), anyString(), anyString())).thenReturn(mockResponse);
+        when(cbPlanService.searchCbPlan(any(), anyString())).thenReturn(mockResponse);
 
         ResponseEntity<ApiResponse> response = controller.searchCbPlan(criteria, "token", "orgId");
         

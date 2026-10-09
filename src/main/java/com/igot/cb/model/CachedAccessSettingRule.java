@@ -31,7 +31,7 @@ public class CachedAccessSettingRule {
             this.isArchived = (Boolean) ruleData.getOrDefault("isArchived", false);
             this.cachedTimeMillis = System.currentTimeMillis();
         } catch (Exception e) {
-            throw new RuntimeException("Failed to parse access setting rule: " + e.getMessage(), e);
+            throw new IllegalStateException("Failed to parse access setting rule: " + e.getMessage(), e);
         }
     }
 
@@ -45,10 +45,10 @@ public class CachedAccessSettingRule {
                         new TypeReference<Map<String, Object>>() {
                         });
             } catch (Exception e) {
-                throw new RuntimeException("Failed to parse context data: " + e.getMessage(), e);
+                throw new IllegalStateException("Failed to parse context data: " + e.getMessage(), e);
             }
         } else {
-            throw new RuntimeException("Invalid context data: " + contextDataStr + ", for contextId: " + contextId);
+            throw new IllegalStateException("Invalid context data: " + contextDataStr + ", for contextId: " + contextId);
         }
         this.isArchived = isArchived;
         this.cachedTimeMillis = System.currentTimeMillis();

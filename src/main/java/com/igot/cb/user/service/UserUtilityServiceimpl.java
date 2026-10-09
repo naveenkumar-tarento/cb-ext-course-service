@@ -75,7 +75,7 @@ public class UserUtilityServiceimpl implements UserUtilityService {
     }
 
     private void populateField(Map<String, Object> user, String field, String userId, Map<String, String> userMap) {
-        if (Constants.DECRYPTED_FIELDS.contains(field)) {
+        if (Constants.getDecryptedFields().contains(field)) {
             if (StringUtils.isNotBlank((String) user.get(field))) {
                 String value = decryptService.decryptString((String) user.get(field));
                 if (StringUtils.isBlank(value)) {

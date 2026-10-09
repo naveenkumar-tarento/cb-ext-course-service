@@ -837,11 +837,11 @@ class ContentRetirementServiceTest {
         contentRetirementService.sendContentRetirementNotifications();
 
         verify(notificationService, times(1)).sendNotificationForContentRetirement(
-                eq("content-filter-edge"),
-                eq("Course Filter Edge"),
-                eq(today.plusDays(1)),
-                eq(List.of("user1")),
-                eq(Constants.REMINDER_NOTIFICATION_ONE_DAY)
+                "content-filter-edge",
+                "Course Filter Edge",
+                today.plusDays(1),
+                List.of("user1"),
+                Constants.REMINDER_NOTIFICATION_ONE_DAY
         );
     }
 

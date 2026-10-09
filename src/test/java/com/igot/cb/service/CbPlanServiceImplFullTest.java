@@ -217,16 +217,16 @@ class CbPlanServiceImplFullTest {
     }
 
     @Test
-    void searchCbPlan_whenEsThrows_raises() throws Exception {
+    void searchCbPlan_whenEsThrows_raises() {
         SearchCriteria crit = new SearchCriteria();
         when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("u1");
         when(esUtilService.searchDocuments(anyString(), any(), anyString())).thenThrow(new RuntimeException("boom"));
-        assertThrows(RuntimeException.class, () -> cbPlanService.searchCbPlan(crit, "org", "token"));
+        assertThrows(RuntimeException.class, () -> cbPlanService.searchCbPlan(crit, "token"));
     }
 
     @Test
     void readCbPlan_emptyId_badRequest() {
-        ApiResponse r = cbPlanService.readCbPlan("", "org", "token");
+        ApiResponse r = cbPlanService.readCbPlan("", "org");
         assertEquals(HttpStatus.BAD_REQUEST, r.getResponseCode());
     }
 
@@ -234,7 +234,7 @@ class CbPlanServiceImplFullTest {
     void readCbPlan_whenDbThrows_internalError() {
         when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), anyMap(), any(), any()))
                 .thenThrow(new RuntimeException("db"));
-        ApiResponse r = cbPlanService.readCbPlan("id1", "org", "token");
+        ApiResponse r = cbPlanService.readCbPlan("id1", "org");
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, r.getResponseCode());
     }
 
@@ -491,7 +491,7 @@ class CbPlanServiceImplFullTest {
     }
 
     @Test
-    void testSearchCbPlan_success() throws Exception {
+    void testSearchCbPlan_success() {
         ObjectMapper mapper = new ObjectMapper();
 
         ReflectionTestUtils.setField(cbPlanService, "mapper", mapper);
@@ -519,7 +519,7 @@ class CbPlanServiceImplFullTest {
         when(contentService.enrichContentInfoForCBPlan(List.of("content1")))
                 .thenReturn(List.of(Map.of("id", "content1", "name", "Content One")));
 
-        ApiResponse response = cbPlanService.searchCbPlan(criteria, "org1", "token123");
+        ApiResponse response = cbPlanService.searchCbPlan(criteria, "token123");
 
         assertNotNull(response);
         assertEquals(Constants.SUCCESS, response.getParams().getStatus());

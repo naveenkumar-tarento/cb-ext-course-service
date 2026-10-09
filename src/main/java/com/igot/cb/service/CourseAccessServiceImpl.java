@@ -178,7 +178,7 @@ public class CourseAccessServiceImpl {
             log.info("AccessSettingRule evalution: UserId: ", userId);
             return response;
         } catch (JsonProcessingException e) {
-            throw new RuntimeException(e);
+            throw new IllegalStateException(e);
         }
     }
 
@@ -207,7 +207,7 @@ public class CourseAccessServiceImpl {
         try {
             redisCacheMgr.putInCache(Constants.ACCESS_KEY+userId, mapper.writeValueAsString(userCourses));
         } catch (JsonProcessingException e) {
-            throw new RuntimeException(e);
+            throw new IllegalStateException(e);
         }
     }
 

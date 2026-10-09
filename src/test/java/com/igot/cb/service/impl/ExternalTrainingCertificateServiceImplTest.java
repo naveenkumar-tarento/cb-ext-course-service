@@ -82,8 +82,9 @@ class ExternalTrainingCertificateServiceImplTest {
     @Test
     void testGenerateCertificateEvent_emptyUserDetailsMap() {
         Map<String, Object> eventDetails = validEventDetails();
+        Map<String, Object> emptyUserDetails = new HashMap<>();
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> service.generateCertificateEvent(new HashMap<>(), eventDetails));
+                () -> service.generateCertificateEvent(emptyUserDetails, eventDetails));
         assertTrue(ex.getMessage().contains("Input map is null or empty"));
     }
 

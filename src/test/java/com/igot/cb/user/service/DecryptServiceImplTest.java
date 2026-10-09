@@ -38,9 +38,9 @@ class DecryptServiceImplTest {
 
     @Test
     void testPostConstruct_Success() {
-        SecretKeySpec secretKeySpec = new SecretKeySpec(Constants.CIPHER_KEY, Constants.CIPHER_ALGORITHM);
+        SecretKeySpec secretKeySpec = new SecretKeySpec(Constants.getCipherKey(), Constants.CIPHER_ALGORITHM);
         ReflectionTestUtils.setField(decryptService, "secretKeySpec", secretKeySpec);
-        
+
         ReflectionTestUtils.invokeMethod(decryptService, "postConstruct");
         
         Cipher decryptCipher = (Cipher) ReflectionTestUtils.getField(decryptService, "decryptCipher");
@@ -69,7 +69,7 @@ class DecryptServiceImplTest {
 
     @Test
     void testDecryptString_SuccessPath() throws Exception {
-        SecretKeySpec secretKeySpec = new SecretKeySpec(Constants.CIPHER_KEY, Constants.CIPHER_ALGORITHM);
+        SecretKeySpec secretKeySpec = new SecretKeySpec(Constants.getCipherKey(), Constants.CIPHER_ALGORITHM);
         ReflectionTestUtils.setField(decryptService, "secretKeySpec", secretKeySpec);
         
         Cipher decryptCipher = Cipher.getInstance(Constants.CIPHER_ALGORITHM);

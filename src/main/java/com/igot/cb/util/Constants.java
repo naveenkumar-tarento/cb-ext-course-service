@@ -1,6 +1,7 @@
 package com.igot.cb.util;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -365,7 +366,11 @@ public class Constants {
     public static final String CB_RETIRE = "RETIRE";
     public static final String CB_PUBLISHED_AT = "publishedat";
     public static final String API_CB_PLAN_READ_BY_ID = "api.cb.plan.v2.read.byId";
-    public static final List<String> DECRYPTED_FIELDS = Arrays.asList("phone", EMAIL);
+    private static final List<String> DECRYPTED_FIELDS = Arrays.asList("phone", EMAIL);
+
+    public static List<String> getDecryptedFields() {
+        return Collections.unmodifiableList(DECRYPTED_FIELDS);
+    }
     public static final String FIRSTNAME = "firstName";
     public static final String CREATED_BY_NAME = "createdByName";
     public static final String COMPETENCIES_V5 = "competencies_v5";
@@ -379,8 +384,12 @@ public class Constants {
     public static final String CREATOR_LOGO = "creatorLogo";
     public static final String LANGUAGE_MAP_V1 = "languageMapV1";
     public static final String CIPHER_ALGORITHM = "AES";
-    public static final byte[] CIPHER_KEY = new byte[] { 'T', 'h', 'i', 's', 'A', 's', 'I', 'S', 'e', 'r', 'c', 'e',
+    private static final byte[] CIPHER_KEY = new byte[] { 'T', 'h', 'i', 's', 'A', 's', 'I', 'S', 'e', 'r', 'c', 'e',
             'K', 't', 'e', 'y' };
+
+    public static byte[] getCipherKey() {
+        return CIPHER_KEY.clone();
+    }
     public static final String CREATED_AT_REQ = "createdat";
     public static final String PUBLISHED_AT= "publishedAt";
     public static final String NUMBER = "number";

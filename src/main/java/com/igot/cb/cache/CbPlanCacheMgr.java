@@ -175,6 +175,21 @@ public class CbPlanCacheMgr {
             return allCbPlans;
         }
 
+        List<String> missingPlanIds = collectCachedPlansAndFindMissing(planIds, allCbPlans);
+
+        if (missingPlanIds.isEmpty()) {
+            log.info("Full cache hit for {} plan IDs", planIds.size());
+            return allCbPlans;
+        }
+
+        log.info("Fetching CB Plan details for {} missing plan IDs from Cassandra in batches of {}", missingPlanIds.size(), planBatchSize);
+        fetchMissingPlansInBatches(missingPlanIds, allCbPlans);
+
+        log.info("Total CB Plans fetched from Cassandra: {}", allCbPlans.size());
+        return allCbPlans;
+    }
+
+    private List<String> collectCachedPlansAndFindMissing(List<String> planIds, List<Map<String, Object>> allCbPlans) {
         List<String> missingPlanIds = new ArrayList<>();
         for (String planId : planIds) {
             Map<String, Object> cachedPlan = planIdCache.getIfPresent(planId);
@@ -184,51 +199,46 @@ public class CbPlanCacheMgr {
                 missingPlanIds.add(planId);
             }
         }
+        return missingPlanIds;
+    }
 
-        if (missingPlanIds.isEmpty()) {
-            log.info("Full cache hit for {} plan IDs", planIds.size());
-            return allCbPlans;
-        }
-
-        log.info("Fetching CB Plan details for {} missing plan IDs from Cassandra in batches of {}", missingPlanIds.size(), planBatchSize);
-
+    private void fetchMissingPlansInBatches(List<String> missingPlanIds, List<Map<String, Object>> allCbPlans) {
         // Process in batches
         for (int i = 0; i < missingPlanIds.size(); i += planBatchSize) {
             List<String> batch = missingPlanIds.subList(i, Math.min(i + planBatchSize, missingPlanIds.size()));
-
-            Map<String, Object> propertiesMap = new HashMap<>();
-            propertiesMap.put(Constants.PLAN_ID, batch);
-
-            try {
-                List<Map<String, Object>> batchResult = cassandraOperation.getRecordsByProperties(
-                        Constants.KEYSPACE_SUNBIRD,
-                        Constants.TABLE_CB_PLAN_V2,
-                        propertiesMap,
-                        new ArrayList<>(),
-                        null
-                );
-
-                if (CollectionUtils.isNotEmpty(batchResult)) {
-                    allCbPlans.addAll(batchResult);
-                    for (Map<String, Object> plan : batchResult) {
-                        String id = (String) plan.get(Constants.PLAN_ID);
-                        if (id != null) {
-                            planIdCache.put(id, plan);
-                        }
-                    }
-                    log.info("Fetched {} records for plan IDs batch: {}", batchResult.size(), batch);
-                } else {
-                    log.warn("No records found for plan IDs batch: {}", batch);
-                }
-
-            } catch (Exception e) {
-                log.error("Error fetching CB Plans for plan IDs batch {}: {}", batch, e.getMessage(), e);
-            }
+            fetchAndCacheBatch(batch, allCbPlans);
         }
+    }
 
+    private void fetchAndCacheBatch(List<String> batch, List<Map<String, Object>> allCbPlans) {
+        Map<String, Object> propertiesMap = new HashMap<>();
+        propertiesMap.put(Constants.PLAN_ID, batch);
 
-        log.info("Total CB Plans fetched from Cassandra: {}", allCbPlans.size());
-        return allCbPlans;
+        try {
+            List<Map<String, Object>> batchResult = cassandraOperation.getRecordsByProperties(
+                    Constants.KEYSPACE_SUNBIRD,
+                    Constants.TABLE_CB_PLAN_V2,
+                    propertiesMap,
+                    new ArrayList<>(),
+                    null
+            );
+
+            if (CollectionUtils.isNotEmpty(batchResult)) {
+                allCbPlans.addAll(batchResult);
+                for (Map<String, Object> plan : batchResult) {
+                    String id = (String) plan.get(Constants.PLAN_ID);
+                    if (id != null) {
+                        planIdCache.put(id, plan);
+                    }
+                }
+                log.info("Fetched {} records for plan IDs batch: {}", batchResult.size(), batch);
+            } else {
+                log.warn("No records found for plan IDs batch: {}", batch);
+            }
+
+        } catch (Exception e) {
+            log.error("Error fetching CB Plans for plan IDs batch {}: {}", batch, e.getMessage(), e);
+        }
     }
 
 }

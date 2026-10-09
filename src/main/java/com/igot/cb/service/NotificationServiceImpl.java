@@ -16,7 +16,6 @@ import org.springframework.stereotype.Service;
 
 import com.igot.cb.cassandra.CassandraOperation;
 import com.igot.cb.model.ApiResponse;
-import com.igot.cb.user.UserUtilityService;
 import com.igot.cb.util.Constants;
 import com.igot.cb.util.CbExtServerProperties;
 import com.igot.cb.util.ProjectUtil;
@@ -37,8 +36,6 @@ public class NotificationServiceImpl implements NotificationService {
 
     private final CassandraOperation cassandraOperation;
 
-    private final UserUtilityService userUtilityService; // kept as fallback
-
     private final OutboundRequestHandlerServiceImpl outboundRequestHandlerService;
 
     private final CbExtServerProperties props;
@@ -46,11 +43,10 @@ public class NotificationServiceImpl implements NotificationService {
     private final ObjectMapper objectMapper;
 
     public NotificationServiceImpl(AccessTokenValidator accessTokenValidator, CassandraOperation cassandraOperation,
-            UserUtilityService userUtilityService, OutboundRequestHandlerServiceImpl outboundRequestHandlerService,
+            OutboundRequestHandlerServiceImpl outboundRequestHandlerService,
             CbExtServerProperties props, ObjectMapper objectMapper) {
         this.accessTokenValidator = accessTokenValidator;
         this.cassandraOperation = cassandraOperation;
-        this.userUtilityService = userUtilityService;
         this.outboundRequestHandlerService = outboundRequestHandlerService;
         this.props = props;
         this.objectMapper = objectMapper;

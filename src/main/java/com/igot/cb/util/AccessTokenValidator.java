@@ -69,11 +69,11 @@ public class AccessTokenValidator {
                         mapper.readValue(new String(decodeFromBase64(body)), Map.class);
                 boolean isExp = isExpired((Integer) tokenBody.get("exp"));
                 if (isExp) {
-                    throw new Exception("Expired auth token is received.");
+                    throw new IllegalStateException("Expired auth token is received.");
                 }
                 return tokenBody;
             } else {
-                throw new Exception("Invalid auth token is received.");
+                throw new IllegalStateException("Invalid auth token is received.");
             }
         } catch (Exception e) {
             log.warn("Failed to validate the user token. Exception: ", e);

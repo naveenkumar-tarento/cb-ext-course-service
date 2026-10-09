@@ -16,6 +16,9 @@ public class CbExtServerProperties {
     @Value("${cb-plan.update.publish.authorized.roles}")
     private String cbPlanUpdatePublishAuthorizedRoles;
 
+    @Value("${local.base.path:/tmp/}")
+    private String localBasePath;
+
     @Value("${cb.plan.v2.index}")
     private String cpPlanIndex;
 

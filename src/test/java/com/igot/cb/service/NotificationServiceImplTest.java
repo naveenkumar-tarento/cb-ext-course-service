@@ -2,7 +2,6 @@ package com.igot.cb.service;
 
 import com.igot.cb.cassandra.CassandraOperation;
 import com.igot.cb.model.ApiResponse;
-import com.igot.cb.user.UserUtilityService;
 import com.igot.cb.util.AccessTokenValidator;
 import com.igot.cb.util.CbExtServerProperties;
 import com.igot.cb.util.Constants;
@@ -131,7 +130,6 @@ class NotificationServiceImplTest {
 
     // Still need to mock these as they are interfaces and easier to mock
     private CassandraOperation cassandraOperation;
-    private UserUtilityService userUtilityService;
 
     private final String authToken = "validToken";
 
@@ -139,10 +137,9 @@ class NotificationServiceImplTest {
     void setUp() {
         // Create mocks manually to avoid @Mock annotation
         cassandraOperation = mock(CassandraOperation.class);
-        userUtilityService = mock(UserUtilityService.class);
 
         notificationService = new NotificationServiceImpl(testAccessTokenValidator, cassandraOperation,
-                userUtilityService, testOutboundRequestHandler, testProps, new com.fasterxml.jackson.databind.ObjectMapper());
+                testOutboundRequestHandler, testProps, new com.fasterxml.jackson.databind.ObjectMapper());
     }
 
     private Map<String, Object> buildUserSearchResponse(String email, String firstName) {
@@ -753,7 +750,7 @@ class NotificationServiceImplTest {
         ThrowingOutboundRequestHandlerService throwingHandler =
                 new ThrowingOutboundRequestHandlerService(new IllegalArgumentException("bad arg"));
         NotificationServiceImpl service = new NotificationServiceImpl(testAccessTokenValidator, cassandraOperation,
-                userUtilityService, throwingHandler, testProps, new com.fasterxml.jackson.databind.ObjectMapper());
+                throwingHandler, testProps, new com.fasterxml.jackson.databind.ObjectMapper());
 
         assertDoesNotThrow(() -> service.sendInAppNotification(
                 Constants.ALERT, Constants.ALERT, List.of("user1"), Map.of("k", "v")));
@@ -764,7 +761,7 @@ class NotificationServiceImplTest {
         ThrowingOutboundRequestHandlerService throwingHandler =
                 new ThrowingOutboundRequestHandlerService(new IllegalStateException("generic boom"));
         NotificationServiceImpl service = new NotificationServiceImpl(testAccessTokenValidator, cassandraOperation,
-                userUtilityService, throwingHandler, testProps, new com.fasterxml.jackson.databind.ObjectMapper());
+                throwingHandler, testProps, new com.fasterxml.jackson.databind.ObjectMapper());
 
         assertDoesNotThrow(() -> service.sendInAppNotification(
                 Constants.ALERT, Constants.ALERT, List.of("user1"), Map.of("k", "v")));

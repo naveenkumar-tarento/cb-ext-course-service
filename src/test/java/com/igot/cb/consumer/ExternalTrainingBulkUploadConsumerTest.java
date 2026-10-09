@@ -65,6 +65,7 @@ class ExternalTrainingBulkUploadConsumerTest {
 
         consumer = Mockito.spy(new ExternalTrainingBulkUploadConsumer(notificationService, props, cassandraOperation,
                 storageService, outboundService, certService, contentInfoService));
+        lenient().when(props.getLocalBasePath()).thenReturn(Constants.LOCAL_BASE_PATH);
 
         inject("objectMapper", new ObjectMapper());
     }
@@ -661,7 +662,8 @@ class ExternalTrainingBulkUploadConsumerTest {
         when(props.getExternalTrainingBulkUploadTable()).thenReturn("table1");
         ArgumentCaptor<Map> captor = ArgumentCaptor.forClass(Map.class);
 
-        consumer.updateUserBulkUploadStatus("org1", "ctx1", "batch1", "id1", "SUCCESS", 5, 5, 0);
+        consumer.updateUserBulkUploadStatus(new ExternalTrainingBulkUploadConsumer.BulkUploadStatusUpdate(
+                "org1", "ctx1", "batch1", "id1", "SUCCESS", 5, 5, 0));
 
         verify(cassandraOperation).updateRecord(eq(Constants.KEYSPACE_SUNBIRD), eq("table1"), captor.capture(), anyMap());
         Map<String, Object> fields = captor.getValue();
@@ -676,7 +678,8 @@ class ExternalTrainingBulkUploadConsumerTest {
         when(props.getExternalTrainingBulkUploadTable()).thenReturn("table1");
         ArgumentCaptor<Map> captor = ArgumentCaptor.forClass(Map.class);
 
-        consumer.updateUserBulkUploadStatus("org1", "ctx1", "batch1", "id1", "", -1, -1, -1);
+        consumer.updateUserBulkUploadStatus(new ExternalTrainingBulkUploadConsumer.BulkUploadStatusUpdate(
+                "org1", "ctx1", "batch1", "id1", "", -1, -1, -1));
 
         verify(cassandraOperation).updateRecord(eq(Constants.KEYSPACE_SUNBIRD), eq("table1"), captor.capture(), anyMap());
         Map<String, Object> fields = captor.getValue();
@@ -693,7 +696,8 @@ class ExternalTrainingBulkUploadConsumerTest {
         when(cassandraOperation.updateRecord(any(), any(), any(), any())).thenThrow(new RuntimeException("db down"));
 
         assertDoesNotThrow(() ->
-                consumer.updateUserBulkUploadStatus("org1", "ctx1", "batch1", "id1", "FAILED", 1, 0, 1));
+                consumer.updateUserBulkUploadStatus(new ExternalTrainingBulkUploadConsumer.BulkUploadStatusUpdate(
+                        "org1", "ctx1", "batch1", "id1", "FAILED", 1, 0, 1)));
     }
 
     // ===========================

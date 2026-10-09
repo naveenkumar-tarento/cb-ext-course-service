@@ -107,8 +107,9 @@ public class ExternalTrainingBulkUploadConsumer {
 
         List<String> errList = validateReceivedKafkaMessage(inputDataMap);
         if (errList.isEmpty()) {
-            updateUserBulkUploadStatus(inputDataMap.get(Constants.ORD_ID), inputDataMap.get(Constants.CONTEXT_ID_CAMEL), inputDataMap.get(Constants.BATCH_ID),
-                    inputDataMap.get(Constants.IDENTIFIER), Constants.STATUS_IN_PROGRESS_UPPERCASE, 0, 0, 0);
+            updateUserBulkUploadStatus(new BulkUploadStatusUpdate(inputDataMap.get(Constants.ORD_ID),
+                    inputDataMap.get(Constants.CONTEXT_ID_CAMEL), inputDataMap.get(Constants.BATCH_ID),
+                    inputDataMap.get(Constants.IDENTIFIER), Constants.STATUS_IN_PROGRESS_UPPERCASE, 0, 0, 0));
             String fileName = inputDataMap.get(Constants.FILE_NAME);
             logger.info("fileName {} ", fileName);
             storageService.downloadFile(fileName, serverProperties.getExternalTrainingBulkUploadContainerName());
@@ -134,7 +135,7 @@ public class ExternalTrainingBulkUploadConsumer {
         Map<String, Object> eventDetails = new HashMap<>();
         String columnName = "Email";
 
-        File file = new File(Constants.LOCAL_BASE_PATH + inputData.get(Constants.FILE_NAME));
+        File file = new File(serverProperties.getLocalBasePath() + inputData.get(Constants.FILE_NAME));
         if (!file.exists() || file.length() == 0) {
             logger.info("File not downloaded/present.");
             status = Constants.FAILED_UPPERCASE;
@@ -347,7 +348,9 @@ public class ExternalTrainingBulkUploadConsumer {
      * Updates the bulk onboarding status.
      */
     private void updateStatus(Map<String, String> inputData, String status, int totalRecordsCount, int processedCount, int failedCount) {
-        updateUserBulkUploadStatus(inputData.get(Constants.ORD_ID), inputData.get(Constants.CONTEXT_ID_CAMEL), inputData.get(Constants.BATCH_ID), inputData.get(Constants.IDENTIFIER), status, totalRecordsCount, processedCount, failedCount);
+        updateUserBulkUploadStatus(new BulkUploadStatusUpdate(inputData.get(Constants.ORD_ID),
+                inputData.get(Constants.CONTEXT_ID_CAMEL), inputData.get(Constants.BATCH_ID),
+                inputData.get(Constants.IDENTIFIER), status, totalRecordsCount, processedCount, failedCount));
     }
 
 
@@ -505,26 +508,28 @@ public class ExternalTrainingBulkUploadConsumer {
         return Constants.SUCCESS;
     }
 
-    public void updateUserBulkUploadStatus(String orgId, String contextId, String batchId, String identifier, String status, int totalRecordsCount,
-                                           int successfulRecordsCount, int failedRecordsCount) {
+    public record BulkUploadStatusUpdate(String orgId, String contextId, String batchId, String identifier,
+            String status, int totalRecordsCount, int successfulRecordsCount, int failedRecordsCount) {}
+
+    public void updateUserBulkUploadStatus(BulkUploadStatusUpdate update) {
         try {
             Map<String, Object> compositeKeys = new HashMap<>();
-            compositeKeys.put(Constants.ORD_ID, orgId);
-            compositeKeys.put(Constants.CONTEXT_ID_CAMEL, contextId);
-            compositeKeys.put(Constants.BATCH_ID, batchId);
-            compositeKeys.put(Constants.IDENTIFIER, identifier);
+            compositeKeys.put(Constants.ORD_ID, update.orgId());
+            compositeKeys.put(Constants.CONTEXT_ID_CAMEL, update.contextId());
+            compositeKeys.put(Constants.BATCH_ID, update.batchId());
+            compositeKeys.put(Constants.IDENTIFIER, update.identifier());
             Map<String, Object> fieldsToBeUpdated = new HashMap<>();
-            if (!status.isEmpty()) {
-                fieldsToBeUpdated.put(Constants.STATUS, status);
+            if (!update.status().isEmpty()) {
+                fieldsToBeUpdated.put(Constants.STATUS, update.status());
             }
-            if (totalRecordsCount >= 0) {
-                fieldsToBeUpdated.put(Constants.TOTAL_RECORDS, totalRecordsCount);
+            if (update.totalRecordsCount() >= 0) {
+                fieldsToBeUpdated.put(Constants.TOTAL_RECORDS, update.totalRecordsCount());
             }
-            if (successfulRecordsCount >= 0) {
-                fieldsToBeUpdated.put(Constants.SUCCESSFUL_RECORDS_COUNT, successfulRecordsCount);
+            if (update.successfulRecordsCount() >= 0) {
+                fieldsToBeUpdated.put(Constants.SUCCESSFUL_RECORDS_COUNT, update.successfulRecordsCount());
             }
-            if (failedRecordsCount >= 0) {
-                fieldsToBeUpdated.put(Constants.FAILED_RECORDS_COUNT, failedRecordsCount);
+            if (update.failedRecordsCount() >= 0) {
+                fieldsToBeUpdated.put(Constants.FAILED_RECORDS_COUNT, update.failedRecordsCount());
             }
             fieldsToBeUpdated.put(Constants.UPDATE_ON, Instant.now());
             cassandraOperation.updateRecord(Constants.KEYSPACE_SUNBIRD, serverProperties.getExternalTrainingBulkUploadTable(),

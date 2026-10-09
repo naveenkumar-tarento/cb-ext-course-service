@@ -215,9 +215,7 @@ public class CbPlanServiceImpl {
                 return response;
             }
 
-            if (!(userId.equals(existingCbPlan.get(Constants.CREATED_BY)) ||
-                    serverProperties.getCbPlanUpdatePublishAuthorizedRoles().stream().anyMatch(
-                            roles -> CollectionUtils.isNotEmpty(userRoles) && userRoles.contains(roles)))) {
+            if (!isAuthorizedToUpdateCbPlan(userId, existingCbPlan, userRoles)) {
                 response.getParams().setStatus(Constants.FAILED);
                 response.getParams().setErr("Not Authorized to update cbp Plan");
                 response.setResponseCode(HttpStatus.BAD_REQUEST);
@@ -240,12 +238,9 @@ public class CbPlanServiceImpl {
                 // Nothing else can be changed
                 // Verify only allowed fields are being changed
                 handleUpdateOfLiveCbPlan(response, updatedCbPlan, existingCbPlan, userId, rootOrgId, isCCA);
-                if (Constants.FAILED.equalsIgnoreCase(response.getParams().getStatus())) {
-                    return response;
-                }
             } else if (Constants.DRAFT.equalsIgnoreCase(existingPlanStatus)) {
-                handleUpdateOfDraftCbPlan(request, isCCA, userOrgId, updatedCbPlan, existingCbPlan, cbPlanId, userId,
-                        response);
+                handleUpdateOfDraftCbPlan(new DraftCbPlanUpdateContext(request, isCCA, userOrgId, updatedCbPlan,
+                        existingCbPlan, cbPlanId, userId), response);
             }
 
             return response;
@@ -260,38 +255,52 @@ public class CbPlanServiceImpl {
         return response;
     }
 
+    private boolean isAuthorizedToUpdateCbPlan(String userId, Map<String, Object> existingCbPlan,
+            List<String> userRoles) {
+        if (userId.equals(existingCbPlan.get(Constants.CREATED_BY))) {
+            return true;
+        }
+        if (CollectionUtils.isEmpty(userRoles)) {
+            return false;
+        }
+        return serverProperties.getCbPlanUpdatePublishAuthorizedRoles().stream().anyMatch(userRoles::contains);
+    }
+
+    private record DraftCbPlanUpdateContext(ApiRequest request, boolean isCCA, String userOrgId,
+            Map<String, Object> updatedCbPlan, Map<String, Object> existingCbPlan, String cbPlanId, String userId) {}
+
     @SuppressWarnings("unchecked")
-    private void handleUpdateOfDraftCbPlan(ApiRequest request, boolean isCCA, String userOrgId,
-            Map<String, Object> updatedCbPlan, Map<String, Object> existingCbPlan, String cbPlanId, String userId,
-            ApiResponse response) throws JsonProcessingException {
-        List<String> validations = requestValidator.validateCbPlanCreateRequest(request, isCCA, userOrgId);
+    private void handleUpdateOfDraftCbPlan(DraftCbPlanUpdateContext ctx, ApiResponse response)
+            throws JsonProcessingException {
+        List<String> validations = requestValidator.validateCbPlanCreateRequest(ctx.request(), ctx.isCCA(),
+                ctx.userOrgId());
         if (CollectionUtils.isNotEmpty(validations)) {
             response.getParams().setStatus(Constants.FAILED);
             response.getParams().setErr(mapper.writeValueAsString(validations));
             response.setResponseCode(HttpStatus.BAD_REQUEST);
             return;
         }
-        Map<String, Object> updatedRequest = prepareCbPlanForUpdate(updatedCbPlan, userId);
+        Map<String, Object> updatedRequest = prepareCbPlanForUpdate(ctx.updatedCbPlan(), ctx.userId());
         Map<String, Object> resp = cassandraOperation.updateRecord(Constants.KEYSPACE_SUNBIRD,
-                Constants.TABLE_CB_PLAN_V2, updatedRequest, Map.of(Constants.PLAN_ID, cbPlanId));
+                Constants.TABLE_CB_PLAN_V2, updatedRequest, Map.of(Constants.PLAN_ID, ctx.cbPlanId()));
         if (resp.get(Constants.RESPONSE).equals(Constants.SUCCESS)) {
             List<String> contentIds =
                     (List<String>) updatedRequest.get(Constants.CONTENT_LIST);
             if (CollectionUtils.isNotEmpty(contentIds)) {
                 // For the content Retirement validation Impl
                 List<String> existingContentIds =
-                        (List<String>) existingCbPlan.get(Constants.CONTENT_LIST);
-                upsertCbPlanContentLookup(cbPlanId, getAddedContent(existingContentIds, contentIds));
-                removeCbPlanInfoForUpdateOrDeleteCbPlan(cbPlanId, getDeletedContent(existingContentIds, contentIds));
+                        (List<String>) ctx.existingCbPlan().get(Constants.CONTENT_LIST);
+                upsertCbPlanContentLookup(ctx.cbPlanId(), getAddedContent(existingContentIds, contentIds));
+                removeCbPlanInfoForUpdateOrDeleteCbPlan(ctx.cbPlanId(), getDeletedContent(existingContentIds, contentIds));
             }
 
             Map<String, Object> sanitizedMap = sanitizeForElastic(updatedRequest);
-            esUtilService.updateDocument(serverProperties.getCpPlanIndex(), Constants.INDEX_TYPE, cbPlanId,
+            esUtilService.updateDocument(serverProperties.getCpPlanIndex(), Constants.INDEX_TYPE, ctx.cbPlanId(),
                     sanitizedMap, serverProperties.getElasticCbPlanJsonPath());
             response.getResult().put(Constants.STATUS, Constants.UPDATED);
         } else {
             response.getParams().setStatus(Constants.FAILED);
-            response.getParams().setErr(CB_PLAN_NOT_FOUND_MSG + cbPlanId);
+            response.getParams().setErr(CB_PLAN_NOT_FOUND_MSG + ctx.cbPlanId());
             response.setResponseCode(HttpStatus.BAD_REQUEST);
         }
     }
@@ -371,9 +380,9 @@ public class CbPlanServiceImpl {
             Set<String> existingRootOrgIdsInCriteria = new HashSet<>();
             String existingOrgScope = (String) existingCbPlan.get(Constants.ORG_SCOPE);
 
-            List<String> errors = prepareAndValidatePublishRequest(existingCbPlan, incomingRequest, updatedRequest,
-                    existingPlanStatus, isCCA, userOrgId, userId, isAdmin, rootOrgIdsInCriteria,
-                    existingRootOrgIdsInCriteria, cbPlanId, response);
+            List<String> errors = prepareAndValidatePublishRequest(new PublishRequestContext(existingCbPlan,
+                    incomingRequest, updatedRequest, existingPlanStatus, isCCA, userOrgId, isAdmin,
+                    rootOrgIdsInCriteria, existingRootOrgIdsInCriteria, cbPlanId), response);
             if (Constants.FAILED.equalsIgnoreCase(response.getParams().getStatus())) {
                 return response;
             }
@@ -434,31 +443,37 @@ public class CbPlanServiceImpl {
         return existingCbPlan;
     }
 
-    private List<String> prepareAndValidatePublishRequest(Map<String, Object> existingCbPlan,
-            Map<String, Object> incomingRequest, Map<String, Object> updatedRequest, String existingPlanStatus,
-            boolean isCCA, String userOrgId, String userId, boolean isAdmin, Set<String> rootOrgIdsInCriteria,
-            Set<String> existingRootOrgIdsInCriteria, String cbPlanId, ApiResponse response)
+    record PublishRequestContext(Map<String, Object> existingCbPlan, Map<String, Object> incomingRequest,
+            Map<String, Object> updatedRequest, String existingPlanStatus, boolean isCCA, String userOrgId,
+            boolean isAdmin, Set<String> rootOrgIdsInCriteria, Set<String> existingRootOrgIdsInCriteria,
+            String cbPlanId) {}
+
+    private List<String> prepareAndValidatePublishRequest(PublishRequestContext ctx, ApiResponse response)
             throws JsonProcessingException {
         List<String> errors = new ArrayList<>();
-        if (Constants.LIVE.equalsIgnoreCase(existingPlanStatus)) {
+        if (Constants.LIVE.equalsIgnoreCase(ctx.existingPlanStatus())) {
             // This will initialize the existing rootOrgIds in the Criteria from contextData
-            requestValidator.validateContextData(existingCbPlan, isCCA, userOrgId, existingRootOrgIdsInCriteria, isAdmin);
+            requestValidator.validateContextData(ctx.existingCbPlan(), ctx.isCCA(), ctx.userOrgId(),
+                    ctx.existingRootOrgIdsInCriteria(), ctx.isAdmin());
             // Need to update live plan with draft data if any
             // Need to update lookup table entries
-            updatedRequest.putAll(prepareCbPlanForRePublish(existingCbPlan, incomingRequest));
-            if (updatedRequest.containsKey(Constants.CONTEXT_DATA_REQUEST)) {
-                errors = requestValidator.validateContextData(updatedRequest, isCCA, userOrgId, rootOrgIdsInCriteria, isAdmin);
+            ctx.updatedRequest().putAll(prepareCbPlanForRePublish(ctx.existingCbPlan(), ctx.incomingRequest()));
+            if (ctx.updatedRequest().containsKey(Constants.CONTEXT_DATA_REQUEST)) {
+                errors = requestValidator.validateContextData(ctx.updatedRequest(), ctx.isCCA(), ctx.userOrgId(),
+                        ctx.rootOrgIdsInCriteria(), ctx.isAdmin());
             }
-        } else if (Constants.DRAFT.equalsIgnoreCase(existingPlanStatus)) {
+        } else if (Constants.DRAFT.equalsIgnoreCase(ctx.existingPlanStatus())) {
             // Need to update comment and then publish.
             // Need to update lookup table entries
-            updatedRequest.put(Constants.STATUS, Constants.LIVE);
-            updatedRequest.put(Constants.END_DATE_REQUEST, parseEndDate(existingCbPlan.get(Constants.END_DATE_REQUEST)));
-            errors = requestValidator.validateContextData(existingCbPlan, isCCA, userOrgId, rootOrgIdsInCriteria, isAdmin);
+            ctx.updatedRequest().put(Constants.STATUS, Constants.LIVE);
+            ctx.updatedRequest().put(Constants.END_DATE_REQUEST,
+                    parseEndDate(ctx.existingCbPlan().get(Constants.END_DATE_REQUEST)));
+            errors = requestValidator.validateContextData(ctx.existingCbPlan(), ctx.isCCA(), ctx.userOrgId(),
+                    ctx.rootOrgIdsInCriteria(), ctx.isAdmin());
         } else {
             response.getParams().setStatus(Constants.FAILED);
             response.getParams().setErr(
-                    "CbPlan is in invalid state for ID: " + cbPlanId + " current status: " + existingPlanStatus);
+                    "CbPlan is in invalid state for ID: " + ctx.cbPlanId() + " current status: " + ctx.existingPlanStatus());
             response.setResponseCode(HttpStatus.BAD_REQUEST);
         }
         return errors;
@@ -552,7 +567,7 @@ public class CbPlanServiceImpl {
                 return parseEndDateString(endDateStr);
             }
         } catch (Exception e) {
-            throw new RuntimeException("Invalid endDate format: " + endDateObj, e);
+            throw new IllegalStateException("Invalid endDate format: " + endDateObj, e);
         }
         return null;
     }
@@ -684,7 +699,7 @@ public class CbPlanServiceImpl {
         }
     }
 
-    public ApiResponse readCbPlan(String cbPlanId, String userOrgId, String authUserToken) {
+    public ApiResponse readCbPlan(String cbPlanId, String userOrgId) {
         ApiResponse response = ProjectUtil.createDefaultResponse(Constants.API_CB_PLAN_READ_BY_ID);
         try {
             if (StringUtils.isEmpty(cbPlanId)) {
@@ -767,7 +782,7 @@ public class CbPlanServiceImpl {
         return enrichData;
     }
 
-    public ApiResponse searchCbPlan(SearchCriteria searchCriteria, String userOrgId, String token) {
+    public ApiResponse searchCbPlan(SearchCriteria searchCriteria, String token) {
         log.info("CbPlanService:searchCbPlan::inside method");
         ApiResponse response = ProjectUtil.createDefaultResponse(Constants.API_COMMUNITY_SEARCH);
         try {
@@ -1278,8 +1293,10 @@ public class CbPlanServiceImpl {
                 boolean existingIsApar = existingCbPlan.get(Constants.IS_APAR) != null
                         && (Boolean) existingCbPlan.get(Constants.IS_APAR);
                 // If existing is true, we cannot allow update to false
-                Boolean incomingIsApar = (Boolean) incomingCbPlanRequest.get(field);
-                if (existingIsApar && incomingIsApar != null && !incomingIsApar) {
+                Object incomingIsAparValue = incomingCbPlanRequest.get(field);
+                boolean incomingIsAparProvided = incomingIsAparValue != null;
+                boolean incomingIsApar = incomingIsAparProvided && (Boolean) incomingIsAparValue;
+                if (existingIsApar && incomingIsAparProvided && !incomingIsApar) {
                     response.getParams().setStatus(Constants.FAILED);
                     response.getParams().setErr("Cannot change isApar from true to false.");
                     response.setResponseCode(HttpStatus.BAD_REQUEST);

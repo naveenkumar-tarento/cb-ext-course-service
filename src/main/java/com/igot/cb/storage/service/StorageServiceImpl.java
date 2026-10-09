@@ -18,6 +18,7 @@ import scala.Option;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -68,8 +69,12 @@ public class StorageServiceImpl implements StorageService {
             response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
             return response;
         } finally {
-            if (file != null && file.exists() && !file.delete()) {
-                logger.warn("Failed to delete temporary file: {}", file.getName());
+            if (file != null && file.exists()) {
+                try {
+                    Files.delete(file.toPath());
+                } catch (IOException deleteEx) {
+                    logger.warn("Failed to delete temporary file: {}", file.getName());
+                }
             }
         }
     }
@@ -93,8 +98,12 @@ public class StorageServiceImpl implements StorageService {
             response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
             return response;
         } finally {
-            if (file != null && !file.delete()) {
-                logger.warn("Failed to delete temporary file: {}", file.getName());
+            if (file != null) {
+                try {
+                    Files.delete(file.toPath());
+                } catch (IOException deleteEx) {
+                    logger.warn("Failed to delete temporary file: {}", file.getName());
+                }
             }
         }
     }
@@ -115,7 +124,7 @@ public class StorageServiceImpl implements StorageService {
         ApiResponse response = ProjectUtil.createDefaultResponse(Constants.API_FILE_DOWNLOAD);
         try {
             String objectKey = containerName + "/" + fileName;
-            storageService.download(serverProperties.getCloudContainerName(), objectKey, Constants.LOCAL_BASE_PATH,
+            storageService.download(serverProperties.getCloudContainerName(), objectKey, serverProperties.getLocalBasePath(),
                     Option.apply(Boolean.FALSE));
             return response;
         } catch (Exception e) {

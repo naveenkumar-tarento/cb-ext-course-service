@@ -29,7 +29,7 @@ class SecretKeySpecTest {
     void testGetEncoded() {
         byte[] encoded = secretKeySpec.getEncoded();
         assertNotNull(encoded);
-        assertArrayEquals(Constants.CIPHER_KEY, encoded);
+        assertArrayEquals(Constants.getCipherKey(), encoded);
     }
 
     @Test
@@ -64,10 +64,10 @@ class SecretKeySpecTest {
 
             @Override
             public byte[] getEncoded() {
-                return Constants.CIPHER_KEY;
+                return Constants.getCipherKey();
             }
         };
-        
+
         assertNotEquals(secretKeySpec, mockKey);
     }
 
@@ -98,10 +98,10 @@ class SecretKeySpecTest {
 
             @Override
             public byte[] getEncoded() {
-                return Constants.CIPHER_KEY;
+                return Constants.getCipherKey();
             }
         };
-        
+
         assertEquals(tripleDESKey, desedeKey);
     }
 
