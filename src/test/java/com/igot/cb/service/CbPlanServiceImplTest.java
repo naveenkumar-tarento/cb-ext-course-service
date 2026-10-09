@@ -3522,10 +3522,12 @@ class CbPlanServiceImplTest {
     void testSearchCbPlan_EmptyDataList_SkipsEnrichmentAndReturnsDefaultResponse() {
         SearchCriteria criteria = new SearchCriteria();
         when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("userId");
+        when(serverProperties.getCpPlanIndex()).thenReturn("cb_plan_idx");
+        when(serverProperties.getElasticCbPlanJsonPath()).thenReturn("json/path");
 
         SearchResult searchResult = new SearchResult();
         searchResult.setData(new ArrayList<>());
-        when(esUtilService.searchDocuments(anyString(), any(), anyString())).thenReturn(searchResult);
+        when(esUtilService.searchDocuments(eq("cb_plan_idx"), any(), eq("json/path"))).thenReturn(searchResult);
 
         ApiResponse response = cbPlanService.searchCbPlan(criteria, "orgId", "token");
 

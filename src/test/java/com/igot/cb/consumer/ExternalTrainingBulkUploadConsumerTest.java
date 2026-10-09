@@ -169,6 +169,44 @@ class ExternalTrainingBulkUploadConsumerTest {
         assertEquals(Constants.FAILED, result);
     }
 
+    @Test
+    void testFinalizeStatus_uploadSuccessButFailedCountNonZero_returnsFailed() throws Exception {
+        File file = File.createTempFile("test", ".csv");
+
+        ApiResponse response = new ApiResponse();
+        response.setResponseCode(org.springframework.http.HttpStatus.OK);
+        when(storageService.uploadFile(any(), any(), any())).thenReturn(response);
+        when(props.getExternalTrainingBulkUploadContainerName()).thenReturn("container");
+        when(props.getCloudContainerName()).thenReturn("cloud");
+
+        String result = (String) invokePrivate(
+                "finalizeStatus",
+                new Class[]{int.class, int.class, int.class, File.class},
+                10, 9, 1, file
+        );
+
+        assertEquals(Constants.FAILED, result);
+    }
+
+    @Test
+    void testFinalizeStatus_uploadSuccessButZeroRecords_returnsFailed() throws Exception {
+        File file = File.createTempFile("test", ".csv");
+
+        ApiResponse response = new ApiResponse();
+        response.setResponseCode(org.springframework.http.HttpStatus.OK);
+        when(storageService.uploadFile(any(), any(), any())).thenReturn(response);
+        when(props.getExternalTrainingBulkUploadContainerName()).thenReturn("container");
+        when(props.getCloudContainerName()).thenReturn("cloud");
+
+        String result = (String) invokePrivate(
+                "finalizeStatus",
+                new Class[]{int.class, int.class, int.class, File.class},
+                0, 0, 0, file
+        );
+
+        assertEquals(Constants.FAILED, result);
+    }
+
     // ===========================
     // PROCESS RECORD
     // ===========================
@@ -416,6 +454,36 @@ class ExternalTrainingBulkUploadConsumerTest {
         Map<String, Object> profileDetails = new HashMap<>();
         profileDetails.put(Constants.PERSONAL_DETAILS, personalDetails);
         userRecord.put(Constants.PROFILE_DETAILS, profileDetails);
+        Map<String, Object> emailUserMap = new HashMap<>();
+
+        invokePrivate("addUserInfoEntry", new Class[]{Map.class, Map.class}, userRecord, emailUserMap);
+
+        assertTrue(emailUserMap.isEmpty());
+    }
+
+    @Test
+    void testAddUserInfoEntry_profileDetailsPresentButPersonalDetailsNull_notAdded() throws Exception {
+        Map<String, Object> userRecord = new HashMap<>();
+        Map<String, Object> profileDetails = new HashMap<>();
+        // Constants.PERSONAL_DETAILS intentionally absent -> personalDetails resolves to null.
+        userRecord.put(Constants.PROFILE_DETAILS, profileDetails);
+        userRecord.put(Constants.USER_ID, "user1");
+        Map<String, Object> emailUserMap = new HashMap<>();
+
+        invokePrivate("addUserInfoEntry", new Class[]{Map.class, Map.class}, userRecord, emailUserMap);
+
+        assertTrue(emailUserMap.isEmpty());
+    }
+
+    @Test
+    void testAddUserInfoEntry_nullPrimaryEmail_notAdded() throws Exception {
+        Map<String, Object> userRecord = new HashMap<>();
+        Map<String, Object> personalDetails = new HashMap<>();
+        // Constants.PRIMARY_EMAIL intentionally absent -> primaryEmail resolves to null.
+        Map<String, Object> profileDetails = new HashMap<>();
+        profileDetails.put(Constants.PERSONAL_DETAILS, personalDetails);
+        userRecord.put(Constants.PROFILE_DETAILS, profileDetails);
+        userRecord.put(Constants.USER_ID, "user1");
         Map<String, Object> emailUserMap = new HashMap<>();
 
         invokePrivate("addUserInfoEntry", new Class[]{Map.class, Map.class}, userRecord, emailUserMap);
@@ -962,6 +1030,92 @@ class ExternalTrainingBulkUploadConsumerTest {
         verifyNoInteractions(storageService, cassandraOperation);
     }
 
+    @Test
+    void testProcessExternalTrainingBulkUpload_fileExistsButEmpty_marksFailed() throws Exception {
+        String fileName = "empty-" + UUID.randomUUID() + ".csv";
+        File file = new File(Constants.LOCAL_BASE_PATH + fileName);
+        file.getParentFile().mkdirs();
+        assertTrue(file.createNewFile());
+
+        try {
+            Map<String, String> inputData = new HashMap<>();
+            inputData.put(Constants.CONTEXT_ID_KEY, "event1");
+            inputData.put(Constants.BATCH_ID, "batch1");
+            inputData.put(Constants.FILE_NAME, fileName);
+            inputData.put(Constants.ORD_ID, "org1");
+            inputData.put(Constants.IDENTIFIER, "id1");
+
+            when(props.getExternalTrainingBulkUploadTable()).thenReturn("statusTable");
+
+            invokePrivate("processExternalTrainingBulkUpload", new Class[]{Map.class}, inputData);
+
+            ArgumentCaptor<Map> captor = ArgumentCaptor.forClass(Map.class);
+            verify(cassandraOperation).updateRecord(eq(Constants.KEYSPACE_SUNBIRD), eq("statusTable"), captor.capture(), anyMap());
+            assertEquals(Constants.FAILED_UPPERCASE, captor.getValue().get(Constants.STATUS));
+            verifyNoInteractions(notificationService, certService, outboundService);
+        } finally {
+            file.delete();
+        }
+    }
+
+    @Test
+    void testProcessExternalTrainingBulkUpload_headersAlreadyContainStatusColumns_allRecordsFail_noNotification() throws Exception {
+        String fileName = "bulk-" + UUID.randomUUID() + ".csv";
+        File file = new File(Constants.LOCAL_BASE_PATH + fileName);
+        file.getParentFile().mkdirs();
+        try (java.io.FileWriter fw = new java.io.FileWriter(file)) {
+            fw.write("Email,Status,Error Details\n");
+            fw.write("bad-email,,\n");
+        }
+
+        try {
+            Map<String, String> inputData = new HashMap<>();
+            inputData.put(Constants.CONTEXT_ID_KEY, "event1");
+            inputData.put(Constants.BATCH_ID, "batch1");
+            inputData.put(Constants.FILE_NAME, fileName);
+            inputData.put(Constants.ORD_ID, "org1");
+            inputData.put(Constants.IDENTIFIER, "id1");
+            inputData.put(Constants.CONTEXT_ID_CAMEL, "event1");
+
+            when(props.getBulkUploadCsvDelimiter()).thenReturn(',');
+            when(props.getSbUrl()).thenReturn("http://sb");
+            when(props.getUserSearchEndPoint()).thenReturn("/search");
+            when(props.getExternalTrainingBulkUploadTable()).thenReturn("statusTable");
+            when(props.getExternalTrainingBulkUploadContainerName()).thenReturn("container");
+            when(props.getCloudContainerName()).thenReturn("cloud");
+            when(outboundService.fetchResultUsingPost(anyString(), anyMap(), anyMap())).thenReturn(null);
+
+            Map<String, Object> batchRow = new HashMap<>();
+            batchRow.put("start_date", new Date(1_000_000L));
+            batchRow.put("end_date", new Date(2_000_000L));
+            batchRow.put(Constants.BATCH_ATTRIBUTES_COLUMN, "{\"duration\":5}");
+            when(cassandraOperation.getRecordsByProperties(eq(Constants.KEYSPACE_SUNBIRD_COURSE), eq(Constants.EVENT_BATCH_TABLE_NAME), anyMap(), isNull(), isNull()))
+                    .thenReturn(List.of(batchRow));
+
+            Map<String, Object> readResponse = new HashMap<>();
+            readResponse.put(Constants.NAME, "Training");
+            readResponse.put(Constants.CERT_TEMPLATE, "tmpl");
+            readResponse.put(Constants.CERT_TEMPLATE_ID, "tmplId");
+            readResponse.put(Constants.SOURCE_NAME, "src");
+            when(contentInfoService.readEvent("event1")).thenReturn(readResponse);
+
+            ApiResponse uploadResponse = new ApiResponse();
+            uploadResponse.setResponseCode(HttpStatus.OK);
+            when(storageService.uploadFile(any(), any(), any())).thenReturn(uploadResponse);
+
+            invokePrivate("processExternalTrainingBulkUpload", new Class[]{Map.class}, inputData);
+
+            // headers already had Status / Error Details columns -> the add() branches are skipped,
+            // and the only record fails processing so no notification is ever sent.
+            verifyNoInteractions(notificationService, certService);
+
+            String written = new String(Files.readAllBytes(file.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+            assertTrue(written.contains("FAILED"));
+        } finally {
+            file.delete();
+        }
+    }
+
     // ===========================
     // PROCESS EXTERNAL TRAINING BULK UPLOAD (private, full file-processing flow)
     // ===========================
@@ -1161,6 +1315,56 @@ class ExternalTrainingBulkUploadConsumerTest {
 
         assertEquals(0L, eventDetails.get(Constants.DURATION));
         assertNotNull(eventDetails.get(Constants.ISSUED_DATE));
+    }
+
+    @Test
+    void testGetEventDetails_startObjNeitherDateNorInstant_startDateNullCausesValidationException() {
+        Map<String, Object> batchRow = new HashMap<>();
+        batchRow.put("start_date", "not-a-date-or-instant");
+        batchRow.put("end_date", new Date());
+        batchRow.put(Constants.BATCH_ATTRIBUTES_COLUMN, "{\"duration\":5}");
+        when(cassandraOperation.getRecordsByProperties(eq(Constants.KEYSPACE_SUNBIRD_COURSE), eq(Constants.EVENT_BATCH_TABLE_NAME), anyMap(), isNull(), isNull()))
+                .thenReturn(List.of(batchRow));
+
+        Map<String, Object> readResponse = new HashMap<>();
+        readResponse.put(Constants.NAME, "Training");
+        readResponse.put(Constants.CERT_TEMPLATE, "tmpl");
+        readResponse.put(Constants.CERT_TEMPLATE_ID, "tmplId");
+        readResponse.put(Constants.SOURCE_NAME, "src");
+        when(contentInfoService.readEvent("event1")).thenReturn(readResponse);
+
+        Map<String, Object> eventDetails = new HashMap<>();
+        Exception ex = assertThrows(Exception.class, () ->
+                invokePrivate("getEventDetails", new Class[]{String.class, String.class, Map.class}, "event1", "batch1", eventDetails));
+
+        // startObj is neither a Date nor an Instant, so startDate stays null, which later fails
+        // validateNotNullOrEmpty and gets wrapped into a CustomException.
+        assertTrue(ex.getCause() instanceof CustomException);
+    }
+
+    @Test
+    void testGetEventDetails_endObjNeitherDateNorInstant_endDateNullCausesFormattingException() {
+        Map<String, Object> batchRow = new HashMap<>();
+        batchRow.put("start_date", Instant.now());
+        batchRow.put("end_date", "not-a-date-or-instant");
+        batchRow.put(Constants.BATCH_ATTRIBUTES_COLUMN, "{\"duration\":5}");
+        when(cassandraOperation.getRecordsByProperties(eq(Constants.KEYSPACE_SUNBIRD_COURSE), eq(Constants.EVENT_BATCH_TABLE_NAME), anyMap(), isNull(), isNull()))
+                .thenReturn(List.of(batchRow));
+
+        Map<String, Object> readResponse = new HashMap<>();
+        readResponse.put(Constants.NAME, "Training");
+        readResponse.put(Constants.CERT_TEMPLATE, "tmpl");
+        readResponse.put(Constants.CERT_TEMPLATE_ID, "tmplId");
+        readResponse.put(Constants.SOURCE_NAME, "src");
+        when(contentInfoService.readEvent("event1")).thenReturn(readResponse);
+
+        Map<String, Object> eventDetails = new HashMap<>();
+        Exception ex = assertThrows(Exception.class, () ->
+                invokePrivate("getEventDetails", new Class[]{String.class, String.class, Map.class}, "event1", "batch1", eventDetails));
+
+        // endObj is neither a Date nor an Instant, so endDate stays null; formatting a null Date
+        // throws, which gets wrapped into a CustomException.
+        assertTrue(ex.getCause() instanceof CustomException);
     }
 
     // ===========================

@@ -32,6 +32,7 @@ import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import com.igot.cb.model.ApiResponse;
 import com.igot.cb.model.KeyData;
@@ -68,6 +69,12 @@ class AccessTokenValidatorTest {
     void setup() {
         when(propertiesCacheMock.getProperty(Constants.SSO_URL)).thenReturn(ssoUrl);
         when(propertiesCacheMock.getProperty(Constants.SSO_REALM)).thenReturn(realm);
+        // AccessTokenValidator.cache is a static field initialized once via PropertiesCache.getInstance()
+        // at class-load time. If AccessTokenValidator gets loaded by an earlier test (in the same JVM fork)
+        // before this class's @BeforeAll mockStatic is active, that field keeps pointing at the real
+        // singleton and the stubs above have no effect. Force it to our mock explicitly so behavior is
+        // deterministic regardless of class-loading/test execution order.
+        ReflectionTestUtils.setField(AccessTokenValidator.class, "cache", propertiesCacheMock);
     }
 
     @AfterAll

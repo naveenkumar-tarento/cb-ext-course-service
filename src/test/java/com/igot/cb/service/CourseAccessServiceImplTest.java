@@ -1850,5 +1850,626 @@ class CourseAccessServiceImplTest {
         assertEquals(1, result.getResult().get(Constants.AI_CBP));
     }
 
+    // ===================== Extra coverage: uncovered lines/branches =====================
+
+    @Test
+    void testGetCoursesForUser_CacheUserCoursesAsJson_JsonProcessingException() throws Exception {
+        when(mockAccessTokenValidator.fetchUserIdFromAccessToken(eq(authToken), any(ApiResponse.class)))
+                .thenReturn("uCacheErr");
+        when(redisCacheMgr.getFromCache(Constants.ACCESS_KEY + "uCacheErr")).thenReturn(null);
+        when(mockUserProfileService.getUserProfile("uCacheErr")).thenReturn(Map.of("cadre", 1));
+
+        BitSet bit = new BitSet();
+        bit.set(1);
+        Map<String, Object> contextData = new HashMap<>();
+        Map<String, Object> ac = new HashMap<>();
+        Map<String, Object> ug = new HashMap<>();
+        ug.put("userGroupCriteriaList", List.of(Map.of("criteriaKey", "cadre", "criteriaValue", bit)));
+        ac.put("userGroups", List.of(ug));
+        contextData.put("accessControlId", ac);
+        CachedAccessSettingRule rule = mock(CachedAccessSettingRule.class);
+        when(rule.getContextId()).thenReturn("cErr");
+        when(rule.getContextData()).thenReturn(contextData);
+        when(contentInfoService.readContent(eq("cErr"), anyList()))
+                .thenReturn(Map.of("identifier", "cErr"));
+        when(mockAccessSettingRuleCacheMgr.getAccessSettingRules()).thenReturn(List.of(rule));
+
+        ObjectMapper mapperSpy = spy(new ObjectMapper());
+        doThrow(new JsonProcessingException("boom") {})
+                .when(mapperSpy).writeValueAsString(any());
+        ReflectionTestUtils.setField(courseAccessService, "mapper", mapperSpy);
+
+        ApiResponse response = courseAccessService.getCoursesForUser(Map.of("x", "y"), authToken);
+
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
+    }
+
+    @Test
+    void testGetCoursesForUser_CacheEmptyString() {
+        when(mockAccessTokenValidator.fetchUserIdFromAccessToken(eq(authToken), any(ApiResponse.class)))
+                .thenReturn("uEmptyCache");
+        when(redisCacheMgr.getFromCache(Constants.ACCESS_KEY + "uEmptyCache")).thenReturn("");
+        when(mockUserProfileService.getUserProfile("uEmptyCache")).thenReturn(Map.of("cadre", 1));
+        when(mockAccessSettingRuleCacheMgr.getAccessSettingRules()).thenReturn(Collections.emptyList());
+
+        ApiResponse response = courseAccessService.getCoursesForUser(Map.of("k", "v"), authToken);
+
+        assertEquals(HttpStatus.OK, response.getResponseCode());
+        assertTrue(((List<?>) response.getResult().get(Constants.CONTENT)).isEmpty());
+    }
+
+    @Test
+    void testFetchAccessSettingsEnabledCoursesForCategory_TotalCountWithinLimit() {
+        Map<String, Object> result = new HashMap<>();
+        result.put(Constants.COUNT, 0);
+        result.put(Constants.CONTENT, List.of());
+        Map<String, Object> compositeSearchRes = Map.of(Constants.RESULT, result);
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), anyMap(), isNull()))
+                .thenReturn(compositeSearchRes);
+
+        Map<String, Object> actual = courseAccessService.fetchAccessSettingsEnabledCoursesForCategory("catWithinLimit");
+
+        assertSame(compositeSearchRes, actual);
+        verify(outboundRequestHandlerService, times(1)).fetchResultUsingPost(anyString(), anyMap(), isNull());
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void testFetchAccessSettingsEnabledCoursesForCategory_InitialContentNull() {
+        ReflectionTestUtils.setField(courseAccessService, "searchLimit", 2);
+        Map<String, Object> firstResult = new HashMap<>();
+        firstResult.put(Constants.COUNT, 4);
+        Map<String, Object> firstPage = Map.of(Constants.RESULT, firstResult);
+
+        Map<String, Object> secondResult = new HashMap<>();
+        secondResult.put(Constants.CONTENT,
+                List.of(Map.of(Constants.IDENTIFIER, "Z1"), Map.of(Constants.IDENTIFIER, "Z2")));
+        Map<String, Object> secondPage = Map.of(Constants.RESULT, secondResult);
+
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), anyMap(), isNull()))
+                .thenReturn(firstPage, secondPage);
+
+        Map<String, Object> result = courseAccessService.fetchAccessSettingsEnabledCoursesForCategory("catInitNull");
+
+        Map<String, Object> resultMap = (Map<String, Object>) result.get(Constants.RESULT);
+        List<Map<String, Object>> allContent = (List<Map<String, Object>>) resultMap.get(Constants.CONTENT);
+        assertEquals(2, allContent.size());
+    }
+
+    @Test
+    void testFetchRemainingPages_NextPageEmptyMap_ContinuesLoop() {
+        ReflectionTestUtils.setField(courseAccessService, "searchLimit", 2);
+        Map<String, Object> reqBody = new HashMap<>();
+        Map<String, Object> req = new HashMap<>();
+        List<Map<String, Object>> allContent = new ArrayList<>();
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), anyMap(), isNull()))
+                .thenReturn(Collections.emptyMap());
+
+        ReflectionTestUtils.invokeMethod(courseAccessService, "fetchRemainingPages",
+                reqBody, req, 4, allContent);
+
+        assertTrue(allContent.isEmpty());
+        verify(outboundRequestHandlerService, atLeastOnce()).fetchResultUsingPost(anyString(), anyMap(), isNull());
+    }
+
+    @Test
+    void testFetchRemainingPages_NextResultMissing_ContinuesLoop() {
+        ReflectionTestUtils.setField(courseAccessService, "searchLimit", 2);
+        Map<String, Object> reqBody = new HashMap<>();
+        Map<String, Object> req = new HashMap<>();
+        List<Map<String, Object>> allContent = new ArrayList<>();
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), anyMap(), isNull()))
+                .thenReturn(Map.of("other", "value"));
+
+        ReflectionTestUtils.invokeMethod(courseAccessService, "fetchRemainingPages",
+                reqBody, req, 4, allContent);
+
+        assertTrue(allContent.isEmpty());
+    }
+
+    @Test
+    void testFetchRemainingPages_NextContentNull_BreaksLoop() {
+        ReflectionTestUtils.setField(courseAccessService, "searchLimit", 2);
+        Map<String, Object> reqBody = new HashMap<>();
+        Map<String, Object> req = new HashMap<>();
+        List<Map<String, Object>> allContent = new ArrayList<>();
+        Map<String, Object> resultNoContent = new HashMap<>();
+        resultNoContent.put("other", "x");
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), anyMap(), isNull()))
+                .thenReturn(Map.of(Constants.RESULT, resultNoContent));
+
+        ReflectionTestUtils.invokeMethod(courseAccessService, "fetchRemainingPages",
+                reqBody, req, 6, allContent);
+
+        assertTrue(allContent.isEmpty());
+        verify(outboundRequestHandlerService, times(1)).fetchResultUsingPost(anyString(), anyMap(), isNull());
+    }
+
+    @Test
+    void testExtractIdentifiers_ContentListNull() {
+        Map<String, Object> resultMap = new HashMap<>();
+        resultMap.put(Constants.CONTENT, null);
+        Map<String, Object> fetchedCourses = Map.of(Constants.RESULT, resultMap);
+        List<String> result = ReflectionTestUtils.invokeMethod(courseAccessService, "extractIdentifiers",
+                fetchedCourses, "catNullContent");
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testEvaluateAccessSettingRule_CriteriaKeyPresentButBitNotSet() {
+        BitSet bs = new BitSet();
+        bs.set(1);
+        Map<String, Object> group = Map.of(
+                Constants.USER_GROUP_ID, "g1",
+                Constants.USER_GROUP_CRITERIA_LIST,
+                List.of(Map.of(Constants.CRITERIA_KEY, "cadre", Constants.CRITERIA_VALUE, bs))
+        );
+        Map<String, Object> access = Map.of(Constants.USER_GROUPS, List.of(group));
+        boolean result = Boolean.TRUE.equals(ReflectionTestUtils.invokeMethod(
+                courseAccessService,
+                "evaluateAccessSettingRule",
+                access,
+                Map.of("cadre", 2)
+        ));
+        assertFalse(result);
+    }
+
+    @Test
+    void testAddUserCourseIfAccessible_RuleDoesNotMatch_NoCourseAdded() {
+        BitSet bit = new BitSet();
+        bit.set(1);
+        Map<String, Object> accessControl = Map.of(
+                Constants.USER_GROUPS,
+                List.of(Map.of(
+                        Constants.USER_GROUP_ID, "G1",
+                        Constants.USER_GROUP_CRITERIA_LIST,
+                        List.of(Map.of(Constants.CRITERIA_KEY, "cadre", Constants.CRITERIA_VALUE, bit))))
+        );
+        CachedAccessSettingRule rule = mock(CachedAccessSettingRule.class);
+        when(rule.getContextData()).thenReturn(Map.of(Constants.ACCESS_CONTROL_ID, accessControl));
+        List<Map<String, Object>> userCourses = new ArrayList<>();
+        ReflectionTestUtils.invokeMethod(courseAccessService, "addUserCourseIfAccessible",
+                rule, Map.of("cadre", 99), userCourses);
+        assertTrue(userCourses.isEmpty());
+        verifyNoInteractions(contentInfoService);
+    }
+
+    @Test
+    void testAddUserCourseIfAccessible_NullContentDetails() {
+        BitSet bit = new BitSet();
+        bit.set(1);
+        Map<String, Object> accessControl = Map.of(
+                Constants.USER_GROUPS,
+                List.of(Map.of(
+                        Constants.USER_GROUP_ID, "G1",
+                        Constants.USER_GROUP_CRITERIA_LIST,
+                        List.of(Map.of(Constants.CRITERIA_KEY, "cadre", Constants.CRITERIA_VALUE, bit))))
+        );
+        CachedAccessSettingRule rule = mock(CachedAccessSettingRule.class);
+        when(rule.getContextId()).thenReturn("CNull");
+        when(rule.getContextData()).thenReturn(Map.of(Constants.ACCESS_CONTROL_ID, accessControl));
+        when(contentInfoService.readContent(eq("CNull"), anyList())).thenReturn(null);
+        List<Map<String, Object>> userCourses = new ArrayList<>();
+        ReflectionTestUtils.invokeMethod(courseAccessService, "addUserCourseIfAccessible",
+                rule, Map.of("cadre", 1), userCourses);
+        assertEquals(1, userCourses.size());
+        assertNull(userCourses.get(0));
+    }
+
+    @Test
+    void testAddUserCourseIfAccessible_ChildNodesNotList() {
+        BitSet bit = new BitSet();
+        bit.set(1);
+        Map<String, Object> accessControl = Map.of(
+                Constants.USER_GROUPS,
+                List.of(Map.of(
+                        Constants.USER_GROUP_ID, "G1",
+                        Constants.USER_GROUP_CRITERIA_LIST,
+                        List.of(Map.of(Constants.CRITERIA_KEY, "cadre", Constants.CRITERIA_VALUE, bit))))
+        );
+        CachedAccessSettingRule rule = mock(CachedAccessSettingRule.class);
+        when(rule.getContextId()).thenReturn("CChild");
+        when(rule.getContextData()).thenReturn(Map.of(Constants.ACCESS_CONTROL_ID, accessControl));
+        Map<String, Object> contentDetails = new HashMap<>();
+        contentDetails.put(Constants.IDENTIFIER, "CChild");
+        contentDetails.put(Constants.COURSE_CATEGORY, Constants.COURSE_CATEGORY_COMPREHENSIVE_ASSESSMENT_PROGRAM);
+        contentDetails.put(Constants.CHILD_NODES, "not-a-list");
+        contentDetails.put(Constants.LEAF_NODES, List.of("x"));
+        when(contentInfoService.readContent(eq("CChild"), anyList())).thenReturn(contentDetails);
+        List<Map<String, Object>> userCourses = new ArrayList<>();
+        ReflectionTestUtils.invokeMethod(courseAccessService, "addUserCourseIfAccessible",
+                rule, Map.of("cadre", 1), userCourses);
+        assertEquals(1, userCourses.size());
+        assertFalse(userCourses.get(0).containsKey(Constants.COURSE_UNITS));
+    }
+
+    @Test
+    void testAddUserCourseIfAccessible_LeafNodesNotList() {
+        BitSet bit = new BitSet();
+        bit.set(1);
+        Map<String, Object> accessControl = Map.of(
+                Constants.USER_GROUPS,
+                List.of(Map.of(
+                        Constants.USER_GROUP_ID, "G1",
+                        Constants.USER_GROUP_CRITERIA_LIST,
+                        List.of(Map.of(Constants.CRITERIA_KEY, "cadre", Constants.CRITERIA_VALUE, bit))))
+        );
+        CachedAccessSettingRule rule = mock(CachedAccessSettingRule.class);
+        when(rule.getContextId()).thenReturn("CLeaf");
+        when(rule.getContextData()).thenReturn(Map.of(Constants.ACCESS_CONTROL_ID, accessControl));
+        Map<String, Object> contentDetails = new HashMap<>();
+        contentDetails.put(Constants.IDENTIFIER, "CLeaf");
+        contentDetails.put(Constants.COURSE_CATEGORY, Constants.COURSE_CATEGORY_COMPREHENSIVE_ASSESSMENT_PROGRAM);
+        contentDetails.put(Constants.CHILD_NODES, List.of("child1"));
+        contentDetails.put(Constants.LEAF_NODES, "not-a-list");
+        when(contentInfoService.readContent(eq("CLeaf"), anyList())).thenReturn(contentDetails);
+        List<Map<String, Object>> userCourses = new ArrayList<>();
+        ReflectionTestUtils.invokeMethod(courseAccessService, "addUserCourseIfAccessible",
+                rule, Map.of("cadre", 1), userCourses);
+        assertEquals(1, userCourses.size());
+        assertFalse(userCourses.get(0).containsKey(Constants.COURSE_UNITS));
+    }
+
+    @Test
+    void testAddExternalUserCourseIfAccessible_EmptyContextData_NoCourseAdded() {
+        CachedAccessSettingRule rule = mock(CachedAccessSettingRule.class);
+        when(rule.getContextData()).thenReturn(new HashMap<>());
+        List<Map<String, Object>> userCourses = new ArrayList<>();
+        ReflectionTestUtils.invokeMethod(courseAccessService, "addExternalUserCourseIfAccessible",
+                rule, Map.of("cadre", 1), userCourses);
+        assertTrue(userCourses.isEmpty());
+        verifyNoInteractions(contentInfoService);
+    }
+
+    @Test
+    void testAddExternalUserCourseIfAccessible_RuleDoesNotMatch_NoCourseAdded() {
+        BitSet bit = new BitSet();
+        bit.set(1);
+        Map<String, Object> ug = new HashMap<>();
+        ug.put(Constants.USER_GROUP_CRITERIA_LIST,
+                List.of(Map.of(Constants.CRITERIA_KEY, "cadre", Constants.CRITERIA_VALUE, bit)));
+        Map<String, Object> accessControl = Map.of(Constants.USER_GROUPS, List.of(ug));
+        CachedAccessSettingRule rule = mock(CachedAccessSettingRule.class);
+        when(rule.getContextData()).thenReturn(Map.of(Constants.ACCESS_CONTROL_ID, accessControl));
+        List<Map<String, Object>> userCourses = new ArrayList<>();
+        ReflectionTestUtils.invokeMethod(courseAccessService, "addExternalUserCourseIfAccessible",
+                rule, Map.of("cadre", 99), userCourses);
+        assertTrue(userCourses.isEmpty());
+        verifyNoInteractions(contentInfoService);
+    }
+
+    @Test
+    void testGetCoursesFromCacheOrServiceForExternalCourse_ExpiredCache() {
+        String partnerId = "partnerExpired";
+        String cacheKey = "access_settings_enabled_" + partnerId;
+        Map<String, List<String>> partnerCache = new HashMap<>();
+        partnerCache.put(cacheKey, List.of("OLD1"));
+        Map<String, Long> timestamps = new HashMap<>();
+        timestamps.put(cacheKey, System.currentTimeMillis() - 50000);
+        ReflectionTestUtils.setField(courseAccessService, "courseCategoryCache", partnerCache);
+        ReflectionTestUtils.setField(courseAccessService, "cacheTimestamps", timestamps);
+        ReflectionTestUtils.setField(courseAccessService, "cacheTtlMs", 1000L);
+
+        Map<String, Object> ciosResponse = Map.of(Constants.DATA, List.of(Map.of(Constants.CONTENT_ID, "FRESH1")));
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), anyMap(), isNull()))
+                .thenReturn(ciosResponse);
+
+        List<String> result = ReflectionTestUtils.invokeMethod(courseAccessService,
+                "getCoursesFromCacheOrServiceForExternalCourse", partnerId);
+
+        assertNotNull(result);
+        assertEquals(1, result.size());
+        assertEquals("FRESH1", result.get(0));
+    }
+
+    @Test
+    void testGetCoursesFromCacheOrServiceForExternalCourse_ValidTimestampNoCachedCourses() {
+        String partnerId = "partnerNoList";
+        String cacheKey = "access_settings_enabled_" + partnerId;
+        Map<String, List<String>> partnerCache = new HashMap<>();
+        Map<String, Long> timestamps = new HashMap<>();
+        timestamps.put(cacheKey, System.currentTimeMillis());
+        ReflectionTestUtils.setField(courseAccessService, "courseCategoryCache", partnerCache);
+        ReflectionTestUtils.setField(courseAccessService, "cacheTimestamps", timestamps);
+        ReflectionTestUtils.setField(courseAccessService, "cacheTtlMs", 99999999L);
+
+        Map<String, Object> ciosResponse = Map.of(Constants.DATA, List.of(Map.of(Constants.CONTENT_ID, "FRESH2")));
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), anyMap(), isNull()))
+                .thenReturn(ciosResponse);
+
+        List<String> result = ReflectionTestUtils.invokeMethod(courseAccessService,
+                "getCoursesFromCacheOrServiceForExternalCourse", partnerId);
+
+        assertNotNull(result);
+        assertEquals(1, result.size());
+        assertEquals("FRESH2", result.get(0));
+    }
+
+    @Test
+    void testFetchAccessSettingsEnabledCoursesForExternalCourses_NodeWithoutContentId() {
+        Map<String, Object> nodeWithout = new HashMap<>();
+        nodeWithout.put("other", "value");
+        Map<String, Object> response = Map.of(Constants.DATA, List.of(
+                Map.of(Constants.CONTENT_ID, "HASID"),
+                nodeWithout
+        ));
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), anyMap(), isNull()))
+                .thenReturn(response);
+        List<String> result = courseAccessService.fetchAccessSettingsEnabledCoursesForExternalCourses("partnerMixed");
+        assertEquals(1, result.size());
+        assertEquals("HASID", result.get(0));
+    }
+
+    @Test
+    void testGetPersonalContentInfo_CbPlanResultNull() {
+        String testAuthToken = "tokNullResult";
+        String userId = "uNullResult";
+        String orgId = "orgNullResult";
+        when(mockAccessTokenValidator.fetchUserIdAndOrg(testAuthToken))
+                .thenReturn(Map.of("userId", userId, "org", orgId));
+        when(redisCacheMgr.getFromCache(anyString())).thenReturn(null);
+        ApiResponse cbPlanResponse = new ApiResponse();
+        cbPlanResponse.setResult(null);
+        when(cbPlanLearnerServiceImpl.getCBPlanListForUser(orgId, userId, true)).thenReturn(cbPlanResponse);
+        doNothing().when(redisCacheMgr).putInCache(anyString(), anyString());
+
+        ApiResponse result = courseAccessService.getPersonalContentInfo(testAuthToken);
+
+        assertNotNull(result);
+        assertEquals(0, result.getResult().get(Constants.TRAINING_PLAN));
+    }
+
+    @Test
+    void testGetAssignedCourseCount_ResponseNull() {
+        CourseAccessServiceImpl spyService = spy(courseAccessService);
+        doReturn(null).when(spyService).getAssignedCoursesForUserByAdmin(anyString(), anyMap());
+        List<String> result = ReflectionTestUtils.invokeMethod(spyService, "getAssignedCourseCount", "uSpy1",
+                Constants.LEARNING_PATHWAY);
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testGetAssignedCourseCount_ResultNull() {
+        CourseAccessServiceImpl spyService = spy(courseAccessService);
+        ApiResponse resp = new ApiResponse();
+        resp.setResult(null);
+        doReturn(resp).when(spyService).getAssignedCoursesForUserByAdmin(anyString(), anyMap());
+        List<String> result = ReflectionTestUtils.invokeMethod(spyService, "getAssignedCourseCount", "uSpy2",
+                Constants.LEARNING_PATHWAY);
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testGetAssignedCourseCount_UnderlyingMethodThrows() {
+        CourseAccessServiceImpl spyService = spy(courseAccessService);
+        doThrow(new RuntimeException("boom")).when(spyService).getAssignedCoursesForUserByAdmin(anyString(), anyMap());
+        List<String> result = ReflectionTestUtils.invokeMethod(spyService, "getAssignedCourseCount", "uSpy3",
+                Constants.LEARNING_PATHWAY);
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testGetFilteredCaProgramIdentifiers_ResponseNull() {
+        CourseAccessServiceImpl spyService = spy(courseAccessService);
+        doReturn(null).when(spyService).getAssignedCoursesForUserByAdmin(anyString(), anyMap());
+        List<String> result = ReflectionTestUtils.invokeMethod(spyService,
+                "getFilteredCaProgramIdentifiers", "uSpy4", Map.of());
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testGetFilteredCaProgramIdentifiers_ResultNull() {
+        CourseAccessServiceImpl spyService = spy(courseAccessService);
+        ApiResponse resp = new ApiResponse();
+        resp.setResult(null);
+        doReturn(resp).when(spyService).getAssignedCoursesForUserByAdmin(anyString(), anyMap());
+        List<String> result = ReflectionTestUtils.invokeMethod(spyService,
+                "getFilteredCaProgramIdentifiers", "uSpy5", Map.of());
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testGetFilteredCaProgramIdentifiers_UnderlyingMethodThrows() {
+        CourseAccessServiceImpl spyService = spy(courseAccessService);
+        doThrow(new RuntimeException("boom")).when(spyService).getAssignedCoursesForUserByAdmin(anyString(), anyMap());
+        List<String> result = ReflectionTestUtils.invokeMethod(spyService,
+                "getFilteredCaProgramIdentifiers", "uSpy6", Map.of());
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testIsCaProgramIdentifierEligible_FutureEndDateIncompleteEnrolment() {
+        Map<String, Object> course = Map.of(Constants.END_DATE_KEY, LocalDate.now().plusDays(10).toString());
+        Map<String, Map<String, Object>> dict = Map.of("C1", Map.of("status", 1));
+        boolean result = Boolean.TRUE.equals(ReflectionTestUtils.invokeMethod(courseAccessService,
+                "isCaProgramIdentifierEligible", course, "C1", LocalDate.now(), dict));
+        assertTrue(result);
+    }
+
+    @Test
+    void testIsFutureBatchEndDate_BlankEndDateString() {
+        Map<String, Object> batch = Map.of("endDate", "   ");
+        boolean result = Boolean.TRUE.equals(ReflectionTestUtils.invokeMethod(courseAccessService,
+                "isFutureBatchEndDate", batch, LocalDate.now()));
+        assertFalse(result);
+    }
+
+    @Test
+    void testCallEnrolmentDictionaryApi_ResultPresentNoResponseKey() {
+        Map<String, Object> apiResponse = Map.of(Constants.RESULT, Map.of("other", "y"));
+        when(outboundRequestHandlerService.fetchResultUsingGet(anyString(), anyMap()))
+                .thenReturn(apiResponse);
+        Map<String, Map<String, Object>> result = ReflectionTestUtils.invokeMethod(courseAccessService,
+                "callEnrolmentDictionaryApi", "token1");
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testCallAssessmentEnrollmentDetailsApi_NullResult() {
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), anyMap(), anyMap()))
+                .thenReturn(Map.of("other", "x"));
+        Map<String, Map<String, Object>> result = ReflectionTestUtils.invokeMethod(courseAccessService,
+                "callAssessmentEnrollmentDetailsApi", "token1", List.of("A1"));
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testCallAssessmentEnrollmentDetailsApi_EmptyCoursesList() {
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), anyMap(), anyMap()))
+                .thenReturn(Map.of(Constants.RESULT, Map.of("other", "y")));
+        Map<String, Map<String, Object>> result = ReflectionTestUtils.invokeMethod(courseAccessService,
+                "callAssessmentEnrollmentDetailsApi", "token1", List.of("A1"));
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testGetStandaloneAssessmentIdentifiersFromSystem_EmptySearchResponse() {
+        ReflectionTestUtils.setField(courseAccessService, "standaloneAssessmentSearchRequest", "{\"request\":{}}");
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), anyMap(), isNull()))
+                .thenReturn(Collections.emptyMap());
+        List<String> result = ReflectionTestUtils.invokeMethod(courseAccessService,
+                "getStandaloneAssessmentIdentifiersFromSystem");
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testGetStandaloneAssessmentIdentifiersFromSystem_NoContentKey() {
+        ReflectionTestUtils.setField(courseAccessService, "standaloneAssessmentSearchRequest", "{\"request\":{}}");
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), anyMap(), isNull()))
+                .thenReturn(Map.of(Constants.RESULT, Map.of("other", "z")));
+        List<String> result = ReflectionTestUtils.invokeMethod(courseAccessService,
+                "getStandaloneAssessmentIdentifiersFromSystem");
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testGetStandaloneAssessmentIdentifiersFromSystem_ResultKeyMissing() {
+        ReflectionTestUtils.setField(courseAccessService, "standaloneAssessmentSearchRequest", "{\"request\":{}}");
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), anyMap(), isNull()))
+                .thenReturn(Map.of("other", "x"));
+        List<String> result = ReflectionTestUtils.invokeMethod(courseAccessService,
+                "getStandaloneAssessmentIdentifiersFromSystem");
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testGetModeratedContentIdentifiers_CacheHitWithoutOrgId() throws Exception {
+        String userId = "uNoOrgCache";
+        String orgId = "orgNotCached";
+        ReflectionTestUtils.setField(courseAccessService, "moderatedCourseSearchRequest",
+                "{\"request\":{\"filters\":{}}}");
+        Map<String, Object> cachedMapWithoutOrg = Map.of("otherOrg",
+                Map.of("identifiers", List.of("X1"), "count", 1));
+        String cachedJson = new ObjectMapper().writeValueAsString(cachedMapWithoutOrg);
+        when(redisCacheMgr.getFromCache(Constants.MODERATED_COURSE_COUNT_REDIS_KEY_PREFIX + userId))
+                .thenReturn(cachedJson);
+        when(mockUserProfileService.readUserProfile(userId, null)).thenReturn(Map.of());
+        Map<String, Object> searchResultMap = new HashMap<>();
+        searchResultMap.put(Constants.CONTENT, List.of(Map.of(Constants.IDENTIFIER, "NEWMOD")));
+        searchResultMap.put("count", 1);
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), anyMap(), isNull()))
+                .thenReturn(Map.of(Constants.RESULT, searchResultMap));
+
+        Map<String, Object> result = ReflectionTestUtils.invokeMethod(courseAccessService,
+                "getModeratedContentIdentifiers", userId, orgId);
+
+        assertNotNull(result);
+        assertEquals(List.of("NEWMOD"), result.get("identifiers"));
+        verify(mockUserProfileService).readUserProfile(userId, null);
+    }
+
+    @Test
+    void testGetModeratedCourseIdentifiers_EmptySearchResponse() {
+        ReflectionTestUtils.setField(courseAccessService, "moderatedCourseSearchRequest",
+                "{\"request\":{\"filters\":{}}}");
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), anyMap(), isNull()))
+                .thenReturn(Collections.emptyMap());
+        Map<String, Object> result = ReflectionTestUtils.invokeMethod(courseAccessService,
+                "getModeratedCourseIdentifiers", "orgEmptySearch", Map.of());
+        assertNotNull(result);
+        assertEquals(Collections.emptyList(), result.get("identifiers"));
+        assertEquals(0, result.get("count"));
+    }
+
+    @Test
+    void testGetModeratedCourseIdentifiers_SearchResponseMissingResultKey() {
+        ReflectionTestUtils.setField(courseAccessService, "moderatedCourseSearchRequest",
+                "{\"request\":{\"filters\":{}}}");
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), anyMap(), isNull()))
+                .thenReturn(Map.of("other", "value"));
+        Map<String, Object> result = ReflectionTestUtils.invokeMethod(courseAccessService,
+                "getModeratedCourseIdentifiers", "orgNoResult", Map.of());
+        assertNotNull(result);
+        assertEquals(Collections.emptyList(), result.get("identifiers"));
+    }
+
+    @Test
+    void testGetModeratedCourseIdentifiers_ResultMissingContentKey() {
+        ReflectionTestUtils.setField(courseAccessService, "moderatedCourseSearchRequest",
+                "{\"request\":{\"filters\":{}}}");
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), anyMap(), isNull()))
+                .thenReturn(Map.of(Constants.RESULT, Map.of("other", "y")));
+        Map<String, Object> result = ReflectionTestUtils.invokeMethod(courseAccessService,
+                "getModeratedCourseIdentifiers", "orgNoContent", Map.of());
+        assertNotNull(result);
+        assertEquals(Collections.emptyList(), result.get("identifiers"));
+    }
+
+    @Test
+    void testGetModeratedCourseIdentifiers_BlankProfileDetailsString() {
+        ReflectionTestUtils.setField(courseAccessService, "moderatedCourseSearchRequest",
+                "{\"request\":{\"filters\":{}}}");
+        Map<String, Object> userProfileDetails = Map.of("profiledetails", "   ");
+        Map<String, Object> searchResponse = Map.of(Constants.RESULT, Map.of(Constants.CONTENT, List.of()));
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), anyMap(), isNull()))
+                .thenReturn(searchResponse);
+        Map<String, Object> result = ReflectionTestUtils.invokeMethod(courseAccessService,
+                "getModeratedCourseIdentifiers", "orgBlank", userProfileDetails);
+        assertNotNull(result);
+        assertEquals(List.of(), result.get("identifiers"));
+    }
+
+    @Test
+    void testGetModeratedCourseIdentifiers_EmptyProfileStatus() throws Exception {
+        ReflectionTestUtils.setField(courseAccessService, "moderatedCourseSearchRequest",
+                "{\"request\":{\"filters\":{}}}");
+        Map<String, Object> profileDetails = Map.of("profileStatus", "");
+        String profileDetailsJson = new ObjectMapper().writeValueAsString(profileDetails);
+        Map<String, Object> userProfileDetails = Map.of("profiledetails", profileDetailsJson);
+        Map<String, Object> searchResponse = Map.of(Constants.RESULT, Map.of(Constants.CONTENT, List.of()));
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), anyMap(), isNull()))
+                .thenReturn(searchResponse);
+        Map<String, Object> result = ReflectionTestUtils.invokeMethod(courseAccessService,
+                "getModeratedCourseIdentifiers", "orgEmptyStatus", userProfileDetails);
+        assertNotNull(result);
+        assertEquals(List.of(), result.get("identifiers"));
+    }
+
+    @Test
+    void testGetModeratedCourseIdentifiers_NonVerifiedProfileStatus() throws Exception {
+        ReflectionTestUtils.setField(courseAccessService, "moderatedCourseSearchRequest",
+                "{\"request\":{\"filters\":{}}}");
+        Map<String, Object> profileDetails = Map.of("profileStatus", "PENDING");
+        String profileDetailsJson = new ObjectMapper().writeValueAsString(profileDetails);
+        Map<String, Object> userProfileDetails = Map.of("profiledetails", profileDetailsJson);
+        Map<String, Object> searchResponse = Map.of(Constants.RESULT, Map.of(Constants.CONTENT, List.of()));
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), anyMap(), isNull()))
+                .thenReturn(searchResponse);
+        Map<String, Object> result = ReflectionTestUtils.invokeMethod(courseAccessService,
+                "getModeratedCourseIdentifiers", "orgPending", userProfileDetails);
+        assertNotNull(result);
+        assertEquals(List.of(), result.get("identifiers"));
+    }
+
 }
 

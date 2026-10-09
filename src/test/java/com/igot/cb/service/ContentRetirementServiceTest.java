@@ -599,5 +599,467 @@ class ContentRetirementServiceTest {
         )).thenReturn(response);
     }
 
+    // ==================== Additional coverage tests ====================
+
+    @Test
+    void processDueRetirements_NullStatus_ShouldSkipRecord() {
+        Map<String, Object> recordData = new HashMap<>();
+        recordData.put(Constants.CONTENT_ID, "content-null-status");
+        recordData.put(Constants.REQUEST_ID, "request-null-status");
+        recordData.put(Constants.RETIREMENT_DATE, LocalDate.now());
+        recordData.put(Constants.STATUS, null);
+
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any(), any()))
+                .thenReturn(Arrays.asList(recordData));
+
+        ApiResponse response = contentRetirementService.processDueRetirements();
+
+        List<Map<String, Object>> contentList = (List<Map<String, Object>>) response.getResult().get(Constants.CONTENT);
+        assertTrue(contentList.isEmpty());
+        verifyNoInteractions(contentService);
+    }
+
+    @Test
+    void processDueRetirements_NotificationLookupThrows_ShouldHandleGracefully() {
+        Map<String, Object> recordData = createRetirementRecord("content-notify-fail", "request-notify-fail", LocalDate.now());
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any(), any()))
+                .thenReturn(Arrays.asList(recordData));
+        when(contentService.retireContent("content-notify-fail"))
+                .thenReturn(Map.of("status", "success"));
+        when(contentService.readContent(eq("content-notify-fail"), any()))
+                .thenThrow(new RuntimeException("content lookup failed"));
+
+        ApiResponse response = contentRetirementService.processDueRetirements();
+
+        List<Map<String, Object>> contentList = (List<Map<String, Object>>) response.getResult().get(Constants.CONTENT);
+        assertEquals(1, contentList.size());
+        assertEquals(true, contentList.get(0).get(Constants.RETIRED));
+        verify(cassandraOperation).updateRecord(eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.CONTENT_RETIREMENT_REQUEST_TABLE), any(Map.class), any(Map.class));
+        verifyNoInteractions(notificationService);
+    }
+
+    @Test
+    void sendContentRetirementNotifications_NullStatus_ShouldSkipNotification() {
+        LocalDate today = LocalDate.now();
+        Map<String, Object> recordData = new HashMap<>();
+        recordData.put(Constants.CONTENT_ID, "content-null-status");
+        recordData.put(Constants.RETIREMENT_DATE, today.plusDays(1));
+        recordData.put(Constants.STATUS, null);
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.CONTENT_RETIREMENT_BY_RETIREMENT_DATE_TABLE),
+                any(), any(), any()
+        )).thenReturn(List.of(recordData));
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.CONTENT_RETIREMENT_BY_APPROVED_DATE_TABLE),
+                any(), any(), any()
+        )).thenReturn(Collections.emptyList());
+
+        contentRetirementService.sendContentRetirementNotifications();
+
+        verifyNoInteractions(notificationService);
+        verifyNoInteractions(contentService);
+    }
+
+    @Test
+    void sendContentRetirementNotifications_RetirementDateNullOrNotMatching_ShouldNotTriggerNotification() {
+        LocalDate today = LocalDate.now();
+
+        Map<String, Object> nullDateRecord = new HashMap<>();
+        nullDateRecord.put(Constants.CONTENT_ID, "content-null-date");
+        nullDateRecord.put(Constants.STATUS, Constants.APPROVED);
+        nullDateRecord.put(Constants.RETIREMENT_DATE, null);
+
+        Map<String, Object> nonMatchingDateRecord = new HashMap<>();
+        nonMatchingDateRecord.put(Constants.CONTENT_ID, "content-far-date");
+        nonMatchingDateRecord.put(Constants.STATUS, Constants.APPROVED);
+        nonMatchingDateRecord.put(Constants.RETIREMENT_DATE, today.plusDays(15));
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.CONTENT_RETIREMENT_BY_RETIREMENT_DATE_TABLE),
+                any(), any(), any()
+        )).thenReturn(List.of(nullDateRecord, nonMatchingDateRecord));
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.CONTENT_RETIREMENT_BY_APPROVED_DATE_TABLE),
+                any(), any(), any()
+        )).thenReturn(Collections.emptyList());
+
+        contentRetirementService.sendContentRetirementNotifications();
+
+        verifyNoInteractions(notificationService);
+        verifyNoInteractions(contentService);
+    }
+
+    @Test
+    void sendContentRetirementNotifications_EmptyBatchUsers_ShouldSkipBatch() {
+        LocalDate today = LocalDate.now();
+        Map<String, Object> recordData = new HashMap<>();
+        recordData.put(Constants.CONTENT_ID, "content-empty-batchusers");
+        recordData.put(Constants.STATUS, Constants.APPROVED);
+        recordData.put(Constants.RETIREMENT_DATE, today.plusDays(1));
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.CONTENT_RETIREMENT_BY_RETIREMENT_DATE_TABLE),
+                any(), any(), any()
+        )).thenReturn(List.of(recordData));
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.CONTENT_RETIREMENT_BY_APPROVED_DATE_TABLE),
+                any(), any(), any()
+        )).thenReturn(Collections.emptyList());
+
+        when(contentService.readContent(eq("content-empty-batchusers"), any()))
+                .thenReturn(Map.of(
+                        Constants.NAME, "Course With Empty Batch Users",
+                        "batches", List.of(Map.of(Constants.BATCH_ID, "batchEmpty"))
+                ));
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.ENROLLMENT_BATCH_LOOKUP),
+                any(), any(), any()
+        )).thenReturn(Collections.emptyList());
+
+        contentRetirementService.sendContentRetirementNotifications();
+
+        verifyNoInteractions(notificationService);
+    }
+
+    @Test
+    void sendContentRetirementNotifications_EmptyEnrolment_ShouldNotNotify() {
+        LocalDate today = LocalDate.now();
+        Map<String, Object> recordData = new HashMap<>();
+        recordData.put(Constants.CONTENT_ID, "content-empty-enrolment");
+        recordData.put(Constants.STATUS, Constants.APPROVED);
+        recordData.put(Constants.RETIREMENT_DATE, today.plusDays(1));
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.CONTENT_RETIREMENT_BY_RETIREMENT_DATE_TABLE),
+                any(), any(), any()
+        )).thenReturn(List.of(recordData));
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.CONTENT_RETIREMENT_BY_APPROVED_DATE_TABLE),
+                any(), any(), any()
+        )).thenReturn(Collections.emptyList());
+
+        when(contentService.readContent(eq("content-empty-enrolment"), any()))
+                .thenReturn(Map.of(
+                        Constants.NAME, "Course With Empty Enrolment",
+                        "batches", List.of(Map.of(Constants.BATCH_ID, "batch1"))
+                ));
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.ENROLLMENT_BATCH_LOOKUP),
+                any(), any(), any()
+        )).thenReturn(List.of(Map.of(Constants.USER_ID, "user1")));
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.USER_ENROLMENTS_V2_TABLE),
+                any(), any(), any()
+        )).thenReturn(Collections.emptyList());
+
+        contentRetirementService.sendContentRetirementNotifications();
+
+        verifyNoInteractions(notificationService);
+    }
+
+    @Test
+    void sendContentRetirementNotifications_EligibilityFilterEdgeCases_ShouldEvaluateAllBranches() {
+        LocalDate today = LocalDate.now();
+        Map<String, Object> recordData = new HashMap<>();
+        recordData.put(Constants.CONTENT_ID, "content-filter-edge");
+        recordData.put(Constants.STATUS, Constants.APPROVED);
+        recordData.put(Constants.RETIREMENT_DATE, today.plusDays(1));
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.CONTENT_RETIREMENT_BY_RETIREMENT_DATE_TABLE),
+                any(), any(), any()
+        )).thenReturn(List.of(recordData));
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.CONTENT_RETIREMENT_BY_APPROVED_DATE_TABLE),
+                any(), any(), any()
+        )).thenReturn(Collections.emptyList());
+
+        when(contentService.readContent(eq("content-filter-edge"), any()))
+                .thenReturn(Map.of(
+                        Constants.NAME, "Course Filter Edge",
+                        "batches", List.of(Map.of(Constants.BATCH_ID, "batch1"))
+                ));
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.ENROLLMENT_BATCH_LOOKUP),
+                any(), any(), any()
+        )).thenReturn(List.of(Map.of(Constants.USER_ID, "user1")));
+
+        Map<String, Object> badStatus = Map.of(
+                Constants.STATUS, "not-an-int",
+                Constants.ACTIVE, true,
+                Constants.ISSUED_CERTIFICATES, Collections.emptyList()
+        );
+        Map<String, Object> badActive = Map.of(
+                Constants.STATUS, 1,
+                Constants.ACTIVE, "not-a-boolean",
+                Constants.ISSUED_CERTIFICATES, Collections.emptyList()
+        );
+        Map<String, Object> certsNullActiveTrue = new HashMap<>();
+        certsNullActiveTrue.put(Constants.STATUS, 1);
+        certsNullActiveTrue.put(Constants.ACTIVE, true);
+        Map<String, Object> activeFalse = Map.of(
+                Constants.STATUS, 1,
+                Constants.ACTIVE, false,
+                Constants.ISSUED_CERTIFICATES, Collections.emptyList()
+        );
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.USER_ENROLMENTS_V2_TABLE),
+                any(), any(), any()
+        )).thenReturn(List.of(badStatus, badActive, certsNullActiveTrue, activeFalse));
+
+        contentRetirementService.sendContentRetirementNotifications();
+
+        verify(notificationService, times(1)).sendNotificationForContentRetirement(
+                eq("content-filter-edge"),
+                eq("Course Filter Edge"),
+                eq(today.plusDays(1)),
+                eq(List.of("user1")),
+                eq(Constants.REMINDER_NOTIFICATION_ONE_DAY)
+        );
+    }
+
+    @Test
+    void sendContentRetirementNotifications_ApprovedDateVariants_ShouldHandleAllBranches() {
+        LocalDate today = LocalDate.now();
+
+        Map<String, Object> nullStatusRecord = new HashMap<>();
+        nullStatusRecord.put(Constants.CONTENT_ID, "content-approved-null-status");
+        nullStatusRecord.put(Constants.STATUS, null);
+        nullStatusRecord.put(Constants.APPROVED_DATE, today);
+        nullStatusRecord.put(Constants.RETIREMENT_DATE, today.plusDays(10));
+
+        Map<String, Object> nullApprovedDateRecord = new HashMap<>();
+        nullApprovedDateRecord.put(Constants.CONTENT_ID, "content-approved-null-date");
+        nullApprovedDateRecord.put(Constants.STATUS, Constants.APPROVED);
+        nullApprovedDateRecord.put(Constants.APPROVED_DATE, null);
+        nullApprovedDateRecord.put(Constants.RETIREMENT_DATE, today.plusDays(10));
+
+        Map<String, Object> pastApprovedDateRecord = new HashMap<>();
+        pastApprovedDateRecord.put(Constants.CONTENT_ID, "content-approved-past-date");
+        pastApprovedDateRecord.put(Constants.STATUS, Constants.APPROVED);
+        pastApprovedDateRecord.put(Constants.APPROVED_DATE, today.minusDays(3));
+        pastApprovedDateRecord.put(Constants.RETIREMENT_DATE, today.plusDays(10));
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.CONTENT_RETIREMENT_BY_APPROVED_DATE_TABLE),
+                any(), any(), any()
+        )).thenReturn(List.of(nullStatusRecord, nullApprovedDateRecord, pastApprovedDateRecord));
+
+        when(cassandraOperation.getRecordsByProperties(
+                eq(Constants.KEYSPACE_SUNBIRD_COURSE),
+                eq(Constants.CONTENT_RETIREMENT_BY_RETIREMENT_DATE_TABLE),
+                any(), any(), any()
+        )).thenReturn(Collections.emptyList());
+
+        contentRetirementService.sendContentRetirementNotifications();
+
+        verifyNoInteractions(notificationService);
+        verifyNoInteractions(contentService);
+    }
+
+    @Test
+    void sendContentRetirementNotificationsToSpv_NullOutboundResponse_ShouldReturnEmptyPublishers() {
+        LocalDate today = LocalDate.now();
+        Map<String, Object> recordData = new HashMap<>();
+        recordData.put(Constants.CONTENT_ID, "do_null_resp");
+        recordData.put(Constants.CREATED_DATE, today);
+        recordData.put(Constants.USER_ID_RAISED_FIELD, "requester-null");
+        recordData.put(Constants.RETIREMENT_DATE, today.plusDays(5));
+
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any(), any()))
+                .thenReturn(List.of(recordData));
+        when(props.getSbUrl()).thenReturn("http://test");
+        when(props.getUserSearchEndPoint()).thenReturn("/search");
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), any(), any()))
+                .thenReturn(null);
+
+        contentRetirementService.sendContentRetirementNotificationsToSpv();
+
+        verifyNoInteractions(notificationService);
+        verify(contentService, never()).readContent(anyString(), anyList());
+    }
+
+    @Test
+    void sendContentRetirementNotificationsToSpv_NonOkResponseCode_ShouldReturnEmptyPublishers() {
+        LocalDate today = LocalDate.now();
+        Map<String, Object> recordData = new HashMap<>();
+        recordData.put(Constants.CONTENT_ID, "do_bad_code");
+        recordData.put(Constants.CREATED_DATE, today);
+        recordData.put(Constants.USER_ID_RAISED_FIELD, "requester-bad");
+        recordData.put(Constants.RETIREMENT_DATE, today.plusDays(5));
+
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any(), any()))
+                .thenReturn(List.of(recordData));
+        when(props.getSbUrl()).thenReturn("http://test");
+        when(props.getUserSearchEndPoint()).thenReturn("/search");
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), any(), any()))
+                .thenReturn(Map.of(Constants.RESPONSE_CODE, "FAILED"));
+
+        contentRetirementService.sendContentRetirementNotificationsToSpv();
+
+        verifyNoInteractions(notificationService);
+    }
+
+    @Test
+    void sendContentRetirementNotificationsToSpv_MissingContentInResponse_ShouldReturnEmptyPublishers() {
+        LocalDate today = LocalDate.now();
+        Map<String, Object> recordData = new HashMap<>();
+        recordData.put(Constants.CONTENT_ID, "do_no_content");
+        recordData.put(Constants.CREATED_DATE, today);
+        recordData.put(Constants.USER_ID_RAISED_FIELD, "requester-noc");
+        recordData.put(Constants.RETIREMENT_DATE, today.plusDays(5));
+
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any(), any()))
+                .thenReturn(List.of(recordData));
+        when(props.getSbUrl()).thenReturn("http://test");
+        when(props.getUserSearchEndPoint()).thenReturn("/search");
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), any(), any()))
+                .thenReturn(Map.of(
+                        Constants.RESPONSE_CODE, "OK",
+                        Constants.RESULT, Map.of(Constants.RESPONSE, Map.of())
+                ));
+
+        contentRetirementService.sendContentRetirementNotificationsToSpv();
+
+        verifyNoInteractions(notificationService);
+    }
+
+    @Test
+    void sendContentRetirementNotificationsToSpv_EmptyFinalRecipients_CorrectCreatedDate_ShouldSkip() {
+        LocalDate today = LocalDate.now();
+        Map<String, Object> recordData = new HashMap<>();
+        recordData.put(Constants.CONTENT_ID, "do_empty_recipients");
+        recordData.put(Constants.CREATED_DATE, today);
+        recordData.put(Constants.USER_ID_RAISED_FIELD, "requester-empty");
+        recordData.put(Constants.RETIREMENT_DATE, today.plusDays(5));
+
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any(), any()))
+                .thenReturn(List.of(recordData));
+        mockSpvUsers(Collections.emptyList());
+
+        contentRetirementService.sendContentRetirementNotificationsToSpv();
+
+        verifyNoInteractions(notificationService);
+        verify(contentService, never()).readContent(anyString(), anyList());
+    }
+
+    @Test
+    void sendContentRetirementNotificationsToSpv_CreatedDateNotTodayCorrectKey_ShouldSkip() {
+        Map<String, Object> recordData = new HashMap<>();
+        recordData.put(Constants.CONTENT_ID, "do_yesterday");
+        recordData.put(Constants.CREATED_DATE, LocalDate.now().minusDays(1));
+        recordData.put(Constants.USER_ID_RAISED_FIELD, "requester-yesterday");
+        recordData.put(Constants.RETIREMENT_DATE, LocalDate.now().plusDays(5));
+
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any(), any()))
+                .thenReturn(List.of(recordData));
+
+        contentRetirementService.sendContentRetirementNotificationsToSpv();
+
+        verifyNoInteractions(contentService);
+        verifyNoInteractions(notificationService);
+    }
+
+    @Test
+    void sendContentRetirementNotificationsToSpv_MalformedPublisherEntries_ShouldFilterInvalidAndKeepValid() {
+        LocalDate today = LocalDate.now();
+        Map<String, Object> recordData = new HashMap<>();
+        recordData.put(Constants.CONTENT_ID, "do_malformed");
+        recordData.put(Constants.CREATED_DATE, today);
+        recordData.put(Constants.USER_ID_RAISED_FIELD, "requester-malformed");
+        recordData.put(Constants.RETIREMENT_DATE, today.plusDays(5));
+
+        when(cassandraOperation.getRecordsByProperties(any(), any(), any(), any(), any()))
+                .thenReturn(List.of(recordData));
+        when(contentService.readContent(eq("do_malformed"), any()))
+                .thenReturn(Map.of("name", "Malformed Course"));
+        when(props.getSbUrl()).thenReturn("http://test");
+        when(props.getUserSearchEndPoint()).thenReturn("/search");
+
+        List<Object> contents = new ArrayList<>();
+        contents.add("not-a-map");
+        contents.add(Map.of());
+        contents.add(Map.of(Constants.USER_ID, ""));
+        contents.add(Map.of(Constants.USER_ID, "uid4"));
+        contents.add(Map.of(Constants.USER_ID, "uid5", Constants.PROFILE_DETAILS, Map.of()));
+        contents.add(Map.of(Constants.USER_ID, "uid6", Constants.PROFILE_DETAILS,
+                Map.of(Constants.PERSONAL_DETAILS, Map.of())));
+        contents.add(Map.of(Constants.USER_ID, "uid7", Constants.PROFILE_DETAILS,
+                Map.of(Constants.PERSONAL_DETAILS, Map.of(Constants.PRIMARY_EMAIL, ""))));
+        contents.add(Map.of(Constants.USER_ID, "uid8", Constants.PROFILE_DETAILS,
+                Map.of(Constants.PERSONAL_DETAILS, Map.of(Constants.PRIMARY_EMAIL, "uid8@test.com"))));
+
+        Map<String, Object> spvResponse = Map.of(
+                Constants.RESPONSE_CODE, "OK",
+                Constants.RESULT, Map.of(
+                        Constants.RESPONSE, Map.of(Constants.CONTENT, contents)
+                )
+        );
+        when(outboundRequestHandlerService.fetchResultUsingPost(anyString(), any(), any()))
+                .thenReturn(spvResponse);
+
+        contentRetirementService.sendContentRetirementNotificationsToSpv();
+
+        verify(notificationService).sendNotificationForContentRetirementSpv(
+                eq("do_malformed"),
+                eq("Malformed Course"),
+                argThat(list -> list.size() == 1 && list.contains("uid8")),
+                eq(Constants.CONTENT_RETIREMENT_SCHEDULED_NOTIFICATION),
+                eq(today.plusDays(5)),
+                argThat(emails -> emails.size() == 1 && emails.contains("uid8@test.com")),
+                eq("requester-malformed")
+        );
+    }
+
+    @Test
+    void collectSpvPublisherIdentifiers_BlankFields_ShouldBeExcluded() {
+        List<Map<String, String>> publishers = new ArrayList<>();
+        Map<String, String> blankEntry = new HashMap<>();
+        blankEntry.put(Constants.USER_ID, "");
+        blankEntry.put(Constants.EMAIL, "");
+        publishers.add(blankEntry);
+
+        Map<String, String> validEntry = new HashMap<>();
+        validEntry.put(Constants.USER_ID, "valid-user");
+        validEntry.put(Constants.EMAIL, "valid@test.com");
+        publishers.add(validEntry);
+
+        List<String> userIds = new ArrayList<>();
+        List<String> emails = new ArrayList<>();
+
+        ReflectionTestUtils.invokeMethod(contentRetirementService, "collectSpvPublisherIdentifiers",
+                publishers, userIds, emails);
+
+        assertEquals(List.of("valid-user"), userIds);
+        assertEquals(List.of("valid@test.com"), emails);
+    }
 
 }

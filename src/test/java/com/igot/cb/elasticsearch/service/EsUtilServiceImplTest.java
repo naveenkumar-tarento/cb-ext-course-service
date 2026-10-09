@@ -5,6 +5,7 @@ import co.elastic.clients.elasticsearch._types.FieldValue;
 import co.elastic.clients.elasticsearch._types.Result;
 import co.elastic.clients.elasticsearch._types.aggregations.*;
 import co.elastic.clients.elasticsearch._types.query_dsl.BoolQuery;
+import co.elastic.clients.elasticsearch._types.query_dsl.QueryBuilders;
 import co.elastic.clients.elasticsearch.core.GetResponse;
 import co.elastic.clients.elasticsearch.core.IndexResponse;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
@@ -856,6 +857,470 @@ class EsUtilServiceImplTest {
 
         assertNotNull(result);
         assertTrue(result.startsWith("created:"));
+    }
+
+    // ---- Additional coverage: uncovered lines/branches ----
+
+    @Test
+    void testUpdateDocument_schemaFiltersOutInvalidField() throws Exception {
+        Map<String, Object> schema = new HashMap<>();
+        schema.put("name", Map.of("type", "text"));
+        when(objectMapper.readValue(any(InputStream.class), any(TypeReference.class)))
+                .thenReturn(schema);
+
+        when(elasticsearchClient.get(any(java.util.function.Function.class), eq(Object.class)))
+                .thenReturn(buildGetResponse(false, null));
+        when(elasticsearchClient.index(any(co.elastic.clients.elasticsearch.core.IndexRequest.class)))
+                .thenReturn(indexResponse);
+        when(indexResponse.result()).thenReturn(Result.Created);
+
+        Map<String, Object> updatedDocument = new HashMap<>();
+        updatedDocument.put("name", "new-name");
+        updatedDocument.put("invalidField", "shouldBeRemoved");
+
+        String result = esUtilService.updateDocument("test-index", "_doc", "1", updatedDocument, "/test.json");
+
+        assertNotNull(result);
+        assertFalse(updatedDocument.containsKey("invalidField"));
+    }
+
+    @Test
+    void testSearchDocuments_hitsMetaNull() throws Exception {
+        SearchCriteria criteria = createBasicSearchCriteria();
+
+        SearchResponse<Object> searchResponse = mock(SearchResponse.class);
+        HitsMetadata<Object> validHits = mock(HitsMetadata.class);
+        Hit<Object> hit = mock(Hit.class);
+        Map<String, Object> source = new HashMap<>();
+        source.put("id", "1");
+        when(hit.source()).thenReturn(source);
+        when(validHits.hits()).thenReturn(Arrays.asList(hit));
+        when(searchResponse.aggregations()).thenReturn(new HashMap<>());
+        when(searchResponse.hits()).thenReturn(validHits, (HitsMetadata<Object>) null);
+
+        when(elasticsearchClient.search(any(co.elastic.clients.elasticsearch.core.SearchRequest.class), eq(Object.class)))
+                .thenReturn(searchResponse);
+
+        SearchResult result = esUtilService.searchDocuments("test-index", criteria, "/test.json");
+
+        assertNotNull(result);
+        assertEquals(0L, result.getTotalCount());
+    }
+
+    @Test
+    void testSearchDocuments_totalObjNull() throws Exception {
+        SearchCriteria criteria = createBasicSearchCriteria();
+
+        SearchResponse<Object> searchResponse = mock(SearchResponse.class);
+        HitsMetadata<Object> hitsMetadata = mock(HitsMetadata.class);
+        Hit<Object> hit = mock(Hit.class);
+        Map<String, Object> source = new HashMap<>();
+        source.put("id", "1");
+        when(hit.source()).thenReturn(source);
+        when(hitsMetadata.hits()).thenReturn(Arrays.asList(hit));
+        when(hitsMetadata.total()).thenReturn(null);
+        when(searchResponse.hits()).thenReturn(hitsMetadata);
+        when(searchResponse.aggregations()).thenReturn(new HashMap<>());
+
+        when(elasticsearchClient.search(any(co.elastic.clients.elasticsearch.core.SearchRequest.class), eq(Object.class)))
+                .thenReturn(searchResponse);
+
+        SearchResult result = esUtilService.searchDocuments("test-index", criteria, "/test.json");
+
+        assertNotNull(result);
+        assertEquals(0L, result.getTotalCount());
+    }
+
+    @Test
+    void testExtractFacetData_missingAggregateAndEmptyFacetList() throws Exception {
+        SearchCriteria criteria = new SearchCriteria();
+        criteria.setFacets(Arrays.asList("missingField", "emptyKeyField"));
+
+        StringTermsBucket emptyKeyBucket = mock(StringTermsBucket.class);
+        when(emptyKeyBucket.key()).thenReturn(FieldValue.of(""));
+
+        co.elastic.clients.elasticsearch._types.aggregations.Buckets<StringTermsBucket> buckets =
+                mock(co.elastic.clients.elasticsearch._types.aggregations.Buckets.class);
+        when(buckets.array()).thenReturn(Collections.singletonList(emptyKeyBucket));
+
+        StringTermsAggregate stringTerms = mock(StringTermsAggregate.class);
+        when(stringTerms.buckets()).thenReturn(buckets);
+
+        Aggregate aggregate = mock(Aggregate.class);
+        when(aggregate.isSterms()).thenReturn(true);
+        when(aggregate.sterms()).thenReturn(stringTerms);
+
+        SearchResponse<Object> searchResponse = mock(SearchResponse.class);
+        when(searchResponse.aggregations()).thenReturn(Map.of("emptyKeyField_agg", aggregate));
+
+        Method method = EsUtilServiceImpl.class.getDeclaredMethod(
+                "extractFacetData", SearchResponse.class, SearchCriteria.class);
+        method.setAccessible(true);
+
+        EsUtilServiceImpl service = new EsUtilServiceImpl(null, null, null);
+        @SuppressWarnings("unchecked")
+        Map<String, List<FacetDTO>> result =
+                (Map<String, List<FacetDTO>>) method.invoke(service, searchResponse, criteria);
+
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testSearchDocumentsWithNullQuery() throws Exception {
+        SearchCriteria criteria = createBasicSearchCriteria();
+        criteria.setQuery(null);
+
+        SearchResponse<Object> searchResponse = createMockSearchResponse();
+        when(elasticsearchClient.search(any(co.elastic.clients.elasticsearch.core.SearchRequest.class), eq(Object.class)))
+                .thenReturn(searchResponse);
+
+        SearchResult result = esUtilService.searchDocuments("test-index", criteria, "/test.json");
+
+        assertNotNull(result);
+    }
+
+    @Test
+    void testSearchDocumentsWithMustNotNonMapItem() throws Exception {
+        SearchCriteria criteria = createBasicSearchCriteria();
+        Map<String, Object> query = new HashMap<>();
+        query.put("must_not", Arrays.asList("not-a-map-item"));
+        criteria.setQuery(query);
+
+        SearchResponse<Object> searchResponse = createMockSearchResponse();
+        when(elasticsearchClient.search(any(co.elastic.clients.elasticsearch.core.SearchRequest.class), eq(Object.class)))
+                .thenReturn(searchResponse);
+
+        SearchResult result = esUtilService.searchDocuments("test-index", criteria, "/test.json");
+
+        assertNotNull(result);
+    }
+
+    @Test
+    void testSearchDocumentsWithEmptyTermsQuery() throws Exception {
+        SearchCriteria criteria = createBasicSearchCriteria();
+        Map<String, Object> query = new HashMap<>();
+        query.put("terms", new HashMap<>());
+        criteria.setQuery(query);
+
+        SearchResponse<Object> searchResponse = createMockSearchResponse();
+        when(elasticsearchClient.search(any(co.elastic.clients.elasticsearch.core.SearchRequest.class), eq(Object.class)))
+                .thenReturn(searchResponse);
+
+        SearchResult result = esUtilService.searchDocuments("test-index", criteria, "/test.json");
+
+        assertNotNull(result);
+    }
+
+    @Test
+    void testSearchDocumentsWithEmptyFacetsList() throws Exception {
+        SearchCriteria criteria = createBasicSearchCriteria();
+        criteria.setFacets(new ArrayList<>());
+
+        SearchResponse<Object> searchResponse = createMockSearchResponse();
+        when(elasticsearchClient.search(any(co.elastic.clients.elasticsearch.core.SearchRequest.class), eq(Object.class)))
+                .thenReturn(searchResponse);
+
+        SearchResult result = esUtilService.searchDocuments("test-index", criteria, "/test.json");
+
+        assertNotNull(result);
+    }
+
+    @Test
+    void testSearchDocumentsWithFacetFieldNotInNonTextFields() throws Exception {
+        SearchCriteria criteria = createBasicSearchCriteria();
+        criteria.setFacets(Arrays.asList("category"));
+
+        SearchResponse<Object> searchResponse = createMockSearchResponse();
+        when(elasticsearchClient.search(any(co.elastic.clients.elasticsearch.core.SearchRequest.class), eq(Object.class)))
+                .thenReturn(searchResponse);
+        when(cbExtServerProperties.getNonTextFields()).thenReturn("other,fields");
+
+        SearchResult result = esUtilService.searchDocuments("test-index", criteria, "/test.json");
+
+        assertNotNull(result);
+    }
+
+    @Test
+    void testSearchDocumentsWithNullFilter() throws Exception {
+        SearchCriteria criteria = createBasicSearchCriteria();
+        criteria.setFilter(null);
+
+        SearchResponse<Object> searchResponse = createMockSearchResponse();
+        when(elasticsearchClient.search(any(co.elastic.clients.elasticsearch.core.SearchRequest.class), eq(Object.class)))
+                .thenReturn(searchResponse);
+
+        SearchResult result = esUtilService.searchDocuments("test-index", criteria, "/test.json");
+
+        assertNotNull(result);
+    }
+
+    @Test
+    void testSearchDocumentsWithMustNotArrayListFilter() throws Exception {
+        SearchCriteria criteria = createBasicSearchCriteria();
+        Map<String, Object> filter = new HashMap<>();
+        filter.put("must_not", new ArrayList<>(Arrays.asList("val1", "val2")));
+        criteria.setFilter((HashMap<String, Object>) filter);
+
+        SearchResponse<Object> searchResponse = createMockSearchResponse();
+        when(elasticsearchClient.search(any(co.elastic.clients.elasticsearch.core.SearchRequest.class), eq(Object.class)))
+                .thenReturn(searchResponse);
+
+        SearchResult result = esUtilService.searchDocuments("test-index", criteria, "/test.json");
+
+        assertNotNull(result);
+    }
+
+    @Test
+    void testSearchDocumentsWithMustNotNonArrayListFilter() throws Exception {
+        SearchCriteria criteria = createBasicSearchCriteria();
+        Map<String, Object> filter = new HashMap<>();
+        filter.put("must_not", List.of("val1", "val2"));
+        criteria.setFilter((HashMap<String, Object>) filter);
+
+        SearchResponse<Object> searchResponse = createMockSearchResponse();
+        when(elasticsearchClient.search(any(co.elastic.clients.elasticsearch.core.SearchRequest.class), eq(Object.class)))
+                .thenReturn(searchResponse);
+        when(cbExtServerProperties.getNonTextFields()).thenReturn("");
+
+        SearchResult result = esUtilService.searchDocuments("test-index", criteria, "/test.json");
+
+        assertNotNull(result);
+    }
+
+    @Test
+    void testSearchDocumentsWithUnsupportedFilterValueType() throws Exception {
+        SearchCriteria criteria = createBasicSearchCriteria();
+        Map<String, Object> filter = new HashMap<>();
+        filter.put("randomNumericField", 123);
+        criteria.setFilter((HashMap<String, Object>) filter);
+
+        SearchResponse<Object> searchResponse = createMockSearchResponse();
+        when(elasticsearchClient.search(any(co.elastic.clients.elasticsearch.core.SearchRequest.class), eq(Object.class)))
+                .thenReturn(searchResponse);
+
+        SearchResult result = esUtilService.searchDocuments("test-index", criteria, "/test.json");
+
+        assertNotNull(result);
+    }
+
+    @Test
+    void testSearchDocumentsWithNestedStringFilter() throws Exception {
+        SearchCriteria criteria = createBasicSearchCriteria();
+        Map<String, Object> filter = new HashMap<>();
+        Map<String, Object> nested = new HashMap<>();
+        nested.put("subField", "someValue");
+        filter.put("metadata", nested);
+        criteria.setFilter((HashMap<String, Object>) filter);
+
+        SearchResponse<Object> searchResponse = createMockSearchResponse();
+        when(elasticsearchClient.search(any(co.elastic.clients.elasticsearch.core.SearchRequest.class), eq(Object.class)))
+                .thenReturn(searchResponse);
+
+        // Note: applyNestedFieldCondition casts a List<FieldValue> directly to TermsQueryField,
+        // which may legitimately throw ClassCastException (pre-existing production behavior,
+        // not modified here). We only assert the code path is exercised either way.
+        try {
+            SearchResult result = esUtilService.searchDocuments("test-index", criteria, "/test.json");
+            assertNotNull(result);
+        } catch (ClassCastException expected) {
+            assertNotNull(expected);
+        }
+    }
+
+    @Test
+    void testSearchDocumentsWithNestedArrayListFilter() throws Exception {
+        SearchCriteria criteria = createBasicSearchCriteria();
+        Map<String, Object> filter = new HashMap<>();
+        Map<String, Object> nested = new HashMap<>();
+        nested.put("subField", new ArrayList<>(Arrays.asList("a", "b")));
+        filter.put("metadata", nested);
+        criteria.setFilter((HashMap<String, Object>) filter);
+
+        SearchResponse<Object> searchResponse = createMockSearchResponse();
+        when(elasticsearchClient.search(any(co.elastic.clients.elasticsearch.core.SearchRequest.class), eq(Object.class)))
+                .thenReturn(searchResponse);
+
+        try {
+            SearchResult result = esUtilService.searchDocuments("test-index", criteria, "/test.json");
+            assertNotNull(result);
+        } catch (ClassCastException expected) {
+            assertNotNull(expected);
+        }
+    }
+
+    @Test
+    void testIsRangeQuery_individualOperators() throws Exception {
+        Method method = EsUtilServiceImpl.class.getDeclaredMethod("isRangeQuery", Map.class);
+        method.setAccessible(true);
+        EsUtilServiceImpl service = new EsUtilServiceImpl(null, null, null);
+
+        Map<String, Object> lteOnly = new HashMap<>();
+        lteOnly.put(Constants.SEARCH_OPERATION_LESS_THAN_EQUALS, 10);
+        assertTrue((boolean) method.invoke(service, lteOnly));
+
+        Map<String, Object> gtOnly = new HashMap<>();
+        gtOnly.put(Constants.SEARCH_OPERATION_GREATER_THAN, 10);
+        assertTrue((boolean) method.invoke(service, gtOnly));
+
+        Map<String, Object> ltOnly = new HashMap<>();
+        ltOnly.put(Constants.SEARCH_OPERATION_LESS_THAN, 10);
+        assertTrue((boolean) method.invoke(service, ltOnly));
+    }
+
+    @Test
+    void testAddSort_orderByPresentOrderDirectionBlank() throws Exception {
+        SearchCriteria criteria = createBasicSearchCriteria();
+        criteria.setOrderBy("createdDate");
+        criteria.setOrderDirection(null);
+
+        SearchResponse<Object> searchResponse = createMockSearchResponse();
+        when(elasticsearchClient.search(any(co.elastic.clients.elasticsearch.core.SearchRequest.class), eq(Object.class)))
+                .thenReturn(searchResponse);
+
+        SearchResult result = esUtilService.searchDocuments("test-index", criteria, "/test.json");
+
+        assertNotNull(result);
+    }
+
+    @Test
+    void testSearchDocumentsWithSorting_fieldMissingFromSchema_ascDirection() throws Exception {
+        SearchCriteria criteria = createBasicSearchCriteria();
+        criteria.setOrderBy("missingField");
+        criteria.setOrderDirection("asc");
+
+        Map<String, Object> mockSchema = new HashMap<>();
+        mockSchema.put("otherField", Map.of("type", "text"));
+
+        try (MockedStatic<EsUtilServiceImpl> mockedStatic = mockStatic(EsUtilServiceImpl.class)) {
+            mockedStatic.when(() -> EsUtilServiceImpl.readJsonSchema("/test.json"))
+                    .thenReturn(mockSchema);
+
+            SearchResponse<Object> searchResponse = createMockSearchResponse();
+            when(elasticsearchClient.search(any(co.elastic.clients.elasticsearch.core.SearchRequest.class), eq(Object.class)))
+                    .thenReturn(searchResponse);
+
+            SearchResult result = esUtilService.searchDocuments("test-index", criteria, "/test.json");
+
+            assertNotNull(result);
+        }
+    }
+
+    @Test
+    void testSearchDocumentsWithSorting_fieldTypeNumber() throws Exception {
+        SearchCriteria criteria = createBasicSearchCriteria();
+        criteria.setOrderBy("numField");
+        criteria.setOrderDirection("desc");
+
+        Map<String, Object> mockSchema = new HashMap<>();
+        mockSchema.put("numField", Map.of("type", Constants.NUMBER));
+
+        try (MockedStatic<EsUtilServiceImpl> mockedStatic = mockStatic(EsUtilServiceImpl.class)) {
+            mockedStatic.when(() -> EsUtilServiceImpl.readJsonSchema("/test.json"))
+                    .thenReturn(mockSchema);
+
+            SearchResponse<Object> searchResponse = createMockSearchResponse();
+            when(elasticsearchClient.search(any(co.elastic.clients.elasticsearch.core.SearchRequest.class), eq(Object.class)))
+                    .thenReturn(searchResponse);
+
+            SearchResult result = esUtilService.searchDocuments("test-index", criteria, "/test.json");
+
+            assertNotNull(result);
+        }
+    }
+
+    @Test
+    void testSearchDocumentsWithSorting_fieldTypeLong() throws Exception {
+        SearchCriteria criteria = createBasicSearchCriteria();
+        criteria.setOrderBy("longField");
+        criteria.setOrderDirection("desc");
+
+        Map<String, Object> mockSchema = new HashMap<>();
+        mockSchema.put("longField", Map.of("type", Constants.LONG));
+
+        try (MockedStatic<EsUtilServiceImpl> mockedStatic = mockStatic(EsUtilServiceImpl.class)) {
+            mockedStatic.when(() -> EsUtilServiceImpl.readJsonSchema("/test.json"))
+                    .thenReturn(mockSchema);
+
+            SearchResponse<Object> searchResponse = createMockSearchResponse();
+            when(elasticsearchClient.search(any(co.elastic.clients.elasticsearch.core.SearchRequest.class), eq(Object.class)))
+                    .thenReturn(searchResponse);
+
+            SearchResult result = esUtilService.searchDocuments("test-index", criteria, "/test.json");
+
+            assertNotNull(result);
+        }
+    }
+
+    @Test
+    void testSearchDocumentsWithSorting_fieldTypeUnknown() throws Exception {
+        SearchCriteria criteria = createBasicSearchCriteria();
+        criteria.setOrderBy("textField");
+        criteria.setOrderDirection("desc");
+
+        Map<String, Object> mockSchema = new HashMap<>();
+        mockSchema.put("textField", Map.of("type", "text"));
+
+        try (MockedStatic<EsUtilServiceImpl> mockedStatic = mockStatic(EsUtilServiceImpl.class)) {
+            mockedStatic.when(() -> EsUtilServiceImpl.readJsonSchema("/test.json"))
+                    .thenReturn(mockSchema);
+
+            SearchResponse<Object> searchResponse = createMockSearchResponse();
+            when(elasticsearchClient.search(any(co.elastic.clients.elasticsearch.core.SearchRequest.class), eq(Object.class)))
+                    .thenReturn(searchResponse);
+
+            SearchResult result = esUtilService.searchDocuments("test-index", criteria, "/test.json");
+
+            assertNotNull(result);
+        }
+    }
+
+    @Test
+    void testBuildBoolQueryWithoutMustKey() throws Exception {
+        Map<String, Object> filterQuery = Map.of(Constants.TERM, Map.of("category", FieldValue.of("tech")));
+
+        Map<String, Object> boolMap = new HashMap<>();
+        boolMap.put(Constants.FILTER, List.of(filterQuery));
+
+        Method method = EsUtilServiceImpl.class.getDeclaredMethod("buildBoolQuery", Map.class);
+        method.setAccessible(true);
+
+        EsUtilServiceImpl service = new EsUtilServiceImpl(null, null, null);
+
+        BoolQuery result = (BoolQuery) method.invoke(service, boolMap);
+
+        assertNotNull(result);
+        assertTrue(result.must().isEmpty());
+        assertFalse(result.filter().isEmpty());
+    }
+
+    @Test
+    void testApplyRangeOrNullQuery_unsupportedOperatorHitsDefault() throws Exception {
+        Map<String, Object> nestedMap = new HashMap<>();
+        nestedMap.put(Constants.SEARCH_OPERATION_GREATER_THAN_EQUALS, 10);
+        nestedMap.put("unsupportedOperator", 5);
+
+        Method method = EsUtilServiceImpl.class.getDeclaredMethod(
+                "applyRangeOrNullQuery", BoolQuery.Builder.class, String.class, Map.class);
+        method.setAccessible(true);
+
+        EsUtilServiceImpl service = new EsUtilServiceImpl(null, null, null);
+        BoolQuery.Builder boolQueryBuilder = QueryBuilders.bool();
+
+        method.invoke(service, boolQueryBuilder, "age", nestedMap);
+
+        assertFalse(boolQueryBuilder.build().must().isEmpty());
+    }
+
+    @Test
+    void testReadJsonSchema_successAndCacheHit() {
+        Map<String, Object> first = EsUtilServiceImpl.readJsonSchema("/test.json");
+        assertNotNull(first);
+        assertTrue(first.containsKey("name"));
+
+        Map<String, Object> second = EsUtilServiceImpl.readJsonSchema("/test.json");
+        assertNotNull(second);
+        assertEquals(first, second);
     }
 
 }

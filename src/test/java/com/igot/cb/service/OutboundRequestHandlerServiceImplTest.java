@@ -804,4 +804,75 @@ class OutboundRequestHandlerServiceImplTest {
         }
     }
 
+    // ==================== Double-failure (nested catch) coverage ====================
+    // These exercise the inner "FAILED_TO_PARSE_ERROR_RESPONSE" catch blocks that run
+    // when the already-populated response object itself fails Jackson serialization
+    // during debug logging, and then fails again on the retry inside the catch block.
+
+    @Test
+    void testFetchResultUsingPost_ResponseSerializationDoubleFailure_LogsParseFailure() {
+        String uri = "http://test.com/api/post";
+        Map<String, Object> request = Map.of("name", "Test");
+        Map<String, Object> badResponse = new java.util.HashMap<>();
+        badResponse.put("bad", new ThrowingBean());
+
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(OutboundRequestHandlerServiceImpl.class);
+        ch.qos.logback.classic.Level originalLevel = logger.getLevel();
+        logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+
+        try {
+            testRestTemplate.setPostForObjectResponse(badResponse);
+            Map<String, Object> result = outboundService.fetchResultUsingPost(uri, request, null);
+            assertNotNull(result);
+            assertTrue(result.containsKey("bad"));
+        } finally {
+            logger.setLevel(originalLevel);
+        }
+    }
+
+    @Test
+    void testFetchResultUsingGet_ResponseSerializationDoubleFailure_LogsParseFailure() {
+        String uri = "http://test.com/api/get";
+        Map<String, Object> badBody = new java.util.HashMap<>();
+        badBody.put("bad", new ThrowingBean());
+        ResponseEntity<Map<String, Object>> responseEntity = new ResponseEntity<>(badBody, HttpStatus.OK);
+
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(OutboundRequestHandlerServiceImpl.class);
+        ch.qos.logback.classic.Level originalLevel = logger.getLevel();
+        logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+
+        try {
+            testRestTemplate.setExchangeResponse(responseEntity);
+            Map<String, Object> result = outboundService.fetchResultUsingGet(uri, null);
+            assertNotNull(result);
+            assertTrue(result.containsKey("bad"));
+        } finally {
+            logger.setLevel(originalLevel);
+        }
+    }
+
+    @Test
+    void testFetchResultUsingDelete_ResponseSerializationDoubleFailure_LogsParseFailure() {
+        String uri = "http://test.com/api/delete";
+        Map<String, Object> badBody = new java.util.HashMap<>();
+        badBody.put("bad", new ThrowingBean());
+        ResponseEntity<Map<String, Object>> responseEntity = new ResponseEntity<>(badBody, HttpStatus.OK);
+
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(OutboundRequestHandlerServiceImpl.class);
+        ch.qos.logback.classic.Level originalLevel = logger.getLevel();
+        logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+
+        try {
+            testRestTemplate.setExchangeResponse(responseEntity);
+            Map<String, Object> result = outboundService.fetchResultUsingDelete(uri, null, null);
+            assertNotNull(result);
+            assertTrue(result.containsKey("bad"));
+        } finally {
+            logger.setLevel(originalLevel);
+        }
+    }
+
 }
