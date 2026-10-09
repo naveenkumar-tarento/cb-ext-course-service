@@ -64,7 +64,7 @@ class ExternalTrainingBulkUploadConsumerTest {
     void setup() throws Exception {
 
         consumer = Mockito.spy(new ExternalTrainingBulkUploadConsumer(notificationService, props, cassandraOperation,
-                storageService, outboundService, null, certService, contentInfoService));
+                storageService, outboundService, certService, contentInfoService));
 
         inject("objectMapper", new ObjectMapper());
     }
@@ -907,7 +907,7 @@ class ExternalTrainingBulkUploadConsumerTest {
 
         consumer.initiateExternalTrainingBulkUploadProcess(json);
 
-        verify(storageService).downloadFile(eq(fileName), eq("container"));
+        verify(storageService).downloadFile(fileName, "container");
         verify(cassandraOperation, atLeastOnce()).updateRecord(anyString(), any(), anyMap(), anyMap());
     }
 
@@ -1017,7 +1017,7 @@ class ExternalTrainingBulkUploadConsumerTest {
 
             invokePrivate("processExternalTrainingBulkUpload", new Class[]{Map.class}, inputData);
 
-            verify(notificationService).sendNotificationForExternalTraining(eq("event1"), eq("Training"), eq(List.of("user1")), eq(Constants.EXTERNAL_TRAINING));
+            verify(notificationService).sendNotificationForExternalTraining("event1", "Training", List.of("user1"), Constants.EXTERNAL_TRAINING);
 
             ArgumentCaptor<Map> captor = ArgumentCaptor.forClass(Map.class);
             verify(cassandraOperation).updateRecord(eq(Constants.KEYSPACE_SUNBIRD), eq("statusTable"), captor.capture(), anyMap());

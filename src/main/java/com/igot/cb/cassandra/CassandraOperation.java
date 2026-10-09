@@ -4,8 +4,8 @@ import com.igot.cb.model.ApiResponse;
 
 import java.util.List;
 import java.util.Map;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
-import java.util.function.Supplier;
 
 /**
  * @author Mahesh RV
@@ -44,7 +44,7 @@ public interface CassandraOperation {
     public Map<String, Object> updateRecord(String keyspaceName, String tableName,
         Map<String, Object> updateAttributes,
         Map<String, Object> compositeKey,
-        Supplier<Boolean> preCommitValidator,
+        BooleanSupplier preCommitValidator,
         Runnable onCommitFailureRollback
     );
 

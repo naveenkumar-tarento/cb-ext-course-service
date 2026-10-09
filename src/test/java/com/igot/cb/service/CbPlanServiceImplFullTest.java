@@ -307,7 +307,7 @@ class CbPlanServiceImplFullTest {
 
         Map<String, Object> result =
                 ReflectionTestUtils.invokeMethod(cbPlanService, "prepareCbPlanForRePublish",
-                        existingCbPlan, incomingRequest, "user123");
+                        existingCbPlan, incomingRequest);
 
         assertNotNull(result);
         assertEquals(true, result.get(Constants.IS_APAR));
@@ -432,11 +432,9 @@ class CbPlanServiceImplFullTest {
         incomingRequest.put(Constants.END_DATE_REQUEST, "2025-12-12");
         incomingRequest.put(Constants.CONTEXT_DATA_REQUEST, Map.of("key", "value"));
 
-        Map<String, Object> existingCbPlan = new HashMap<>();
-
         Map<String, Object> result = ReflectionTestUtils.invokeMethod(
                 cbPlanService, "prepareCbPlanForUpdate",
-                incomingRequest, existingCbPlan, "user123");
+                incomingRequest, "user123");
 
         assertNotNull(result);
         assertEquals("user123", result.get(Constants.UPDATED_BY));

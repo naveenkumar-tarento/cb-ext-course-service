@@ -251,6 +251,12 @@ class AccessTokenValidatorTest {
         assertFalse(validator.checkIss("any-issuer"));
     }
 
+    @Test
+    void testCheckIss_MatchingIssuer_ReturnsTrue() {
+        String matchingIssuer = ssoUrl + "realms/" + realm;
+        assertTrue(validator.checkIss(matchingIssuer));
+    }
+
 
 
     @Test
@@ -301,6 +307,75 @@ class AccessTokenValidatorTest {
         assertEquals(Constants.FAILED, response.getParams().getStatus());
         assertEquals(Constants.ACCESS_TOKEN_VALIDATION_FAILED, response.getParams().getErrMsg());
         assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+    }
+
+    @Test
+    void testFetchUserIdAndOrg_Success() {
+        AccessTokenValidator spy = spy(validator);
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("iss", ssoUrl + "realms/" + realm);
+        payload.put("sub", "user:123");
+        payload.put("org", "orgA");
+
+        doReturn(payload).when(spy).validateToken(any());
+        doReturn(true).when(spy).checkIss(any());
+
+        Map<String, Object> result = spy.fetchUserIdAndOrg("valid-token");
+
+        assertEquals("123", result.get("userId"));
+        assertEquals("orgA", result.get("org"));
+    }
+
+    @Test
+    void testFetchUserIdAndOrg_EmptyPayload() {
+        AccessTokenValidator spy = spy(validator);
+        doReturn(Collections.emptyMap()).when(spy).validateToken(any());
+
+        Map<String, Object> result = spy.fetchUserIdAndOrg("invalid-token");
+
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testFetchUserIdAndOrg_InvalidIssuer() {
+        AccessTokenValidator spy = spy(validator);
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("iss", "invalid-issuer");
+        payload.put("sub", "user:123");
+
+        doReturn(payload).when(spy).validateToken(any());
+        doReturn(false).when(spy).checkIss(any());
+
+        Map<String, Object> result = spy.fetchUserIdAndOrg("valid-token");
+
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testFetchUserIdAndOrg_BlankUserId() {
+        AccessTokenValidator spy = spy(validator);
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("iss", ssoUrl + "realms/" + realm);
+        payload.put("sub", "");
+        payload.put("org", "orgB");
+
+        doReturn(payload).when(spy).validateToken(any());
+        doReturn(true).when(spy).checkIss(any());
+
+        Map<String, Object> result = spy.fetchUserIdAndOrg("valid-token");
+
+        assertEquals("", result.get("userId"));
+        assertEquals("orgB", result.get("org"));
+    }
+
+    @Test
+    void testFetchUserIdAndOrg_Exception() {
+        AccessTokenValidator spy = spy(validator);
+        doThrow(new RuntimeException("Test exception")).when(spy).validateToken(any());
+
+        Map<String, Object> result = spy.fetchUserIdAndOrg("invalid-token");
+
+        assertTrue(result.isEmpty());
     }
 
     @Test

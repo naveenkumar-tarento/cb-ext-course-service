@@ -28,7 +28,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
 import java.io.*;
@@ -56,8 +55,6 @@ public class ExternalTrainingBulkUploadConsumer {
 
     private final OutboundRequestHandlerServiceImpl outboundRequestHandlerService;
 
-    private final KafkaTemplate<String, String> kafkaTemplate;
-
     private final ExternalTrainingCertificateServiceImpl externalTrainingCertificateService;
 
     private final ContentInfoServiceImpl contentInfoService;
@@ -67,14 +64,13 @@ public class ExternalTrainingBulkUploadConsumer {
     @Autowired
     public ExternalTrainingBulkUploadConsumer(NotificationService notificationService, CbExtServerProperties serverProperties,
             CassandraOperation cassandraOperation, StorageService storageService, OutboundRequestHandlerServiceImpl outboundRequestHandlerService,
-            KafkaTemplate<String, String> kafkaTemplate, ExternalTrainingCertificateServiceImpl externalTrainingCertificateService,
+            ExternalTrainingCertificateServiceImpl externalTrainingCertificateService,
             ContentInfoServiceImpl contentInfoService) {
         this.notificationService = notificationService;
         this.serverProperties = serverProperties;
         this.cassandraOperation = cassandraOperation;
         this.storageService = storageService;
         this.outboundRequestHandlerService = outboundRequestHandlerService;
-        this.kafkaTemplate = kafkaTemplate;
         this.externalTrainingCertificateService = externalTrainingCertificateService;
         this.contentInfoService = contentInfoService;
     }

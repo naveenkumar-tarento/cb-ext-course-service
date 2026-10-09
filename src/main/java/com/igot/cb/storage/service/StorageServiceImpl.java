@@ -25,6 +25,7 @@ import java.util.Map;
 public class StorageServiceImpl implements StorageService {
 
     private final Logger logger = LoggerFactory.getLogger(getClass().getName());
+    private static final String FAILED_TO_UPLOAD_FILE_MSG = "Failed to upload file. Exception: ";
     private BaseStorageService storageService = null;
 
     private final CbExtServerProperties serverProperties;
@@ -52,21 +53,23 @@ public class StorageServiceImpl implements StorageService {
         File file = null;
         try {
             file = new File(System.currentTimeMillis() + "_" + mFile.getOriginalFilename());
-            file.createNewFile();
+            if (!file.createNewFile()) {
+                logger.warn("File already existed and was reused for upload: {}", file.getName());
+            }
             // Use try-with-resources to ensure FileOutputStream is closed
             try (FileOutputStream fos = new FileOutputStream(file)) {
                 fos.write(mFile.getBytes());
             }
             return uploadFile(file, cloudFolderName, containerName);
         } catch (Exception e) {
-            logger.error("Failed to upload file. Exception: ", e);
+            logger.error(FAILED_TO_UPLOAD_FILE_MSG, e);
             response.getParams().setStatus(Constants.FAILED);
-            response.getParams().setErrMsg("Failed to upload file. Exception: " + e.getMessage());
+            response.getParams().setErrMsg(FAILED_TO_UPLOAD_FILE_MSG + e.getMessage());
             response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
             return response;
         } finally {
-            if (file != null && file.exists()) {
-                file.delete();
+            if (file != null && file.exists() && !file.delete()) {
+                logger.warn("Failed to delete temporary file: {}", file.getName());
             }
         }
     }
@@ -84,14 +87,14 @@ public class StorageServiceImpl implements StorageService {
             response.getResult().putAll(uploadedFile);
             return response;
         } catch (Exception e) {
-            logger.error("Failed to upload file. Exception: ", e);
+            logger.error(FAILED_TO_UPLOAD_FILE_MSG, e);
             response.getParams().setStatus(Constants.FAILED);
-            response.getParams().setErrMsg("Failed to upload file. Exception: " + e.getMessage());
+            response.getParams().setErrMsg(FAILED_TO_UPLOAD_FILE_MSG + e.getMessage());
             response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
             return response;
         } finally {
-            if (file != null) {
-                file.delete();
+            if (file != null && !file.delete()) {
+                logger.warn("Failed to delete temporary file: {}", file.getName());
             }
         }
     }
@@ -103,6 +106,7 @@ public class StorageServiceImpl implements StorageService {
                 storageService = null;
             }
         } catch (Exception e) {
+            // Best-effort cleanup during finalization; nothing further can be done here.
         }
     }
 

@@ -1720,7 +1720,7 @@ class CourseAccessServiceImplTest {
     }
 
     @Test
-    void testGetModeratedContentIdentifiers_CacheMissBuildsAndCaches() throws Exception {
+    void testGetModeratedContentIdentifiers_CacheMissBuildsAndCaches() {
         String userId = "u2";
         String orgId = "org2";
         ReflectionTestUtils.setField(courseAccessService, "moderatedCourseSearchRequest",

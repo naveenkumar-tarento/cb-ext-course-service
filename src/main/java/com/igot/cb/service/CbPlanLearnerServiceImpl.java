@@ -6,11 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.igot.cb.cache.CbPlanCacheMgr;
 import com.igot.cb.cache.RedisCacheMgr;
 import com.igot.cb.cassandra.CassandraOperation;
-import com.igot.cb.elasticsearch.service.EsUtilService;
 import com.igot.cb.model.ApiResponse;
-import com.igot.cb.user.UserUtilityService;
 import com.igot.cb.util.AccessTokenValidator;
-import com.igot.cb.util.CbExtServerProperties;
 import com.igot.cb.util.Constants;
 import com.igot.cb.util.ProjectUtil;
 import lombok.extern.slf4j.Slf4j;
@@ -44,13 +41,7 @@ public class CbPlanLearnerServiceImpl {
     @Value("${cbplan.allowed.fields.update}")
     private String allowedFieldsConfig;
 
-    private final CbExtServerProperties serverProperties;
-
-    private final UserUtilityService userUtilityService;
-
     private final ContentInfoServiceImpl contentService;
-
-    private final EsUtilService esUtilService;
 
     private final CbPlanCacheMgr cbPlanCacheMgr;
 
@@ -63,15 +54,11 @@ public class CbPlanLearnerServiceImpl {
     private final RedisCacheMgr redisCacheMgr;
 
     public CbPlanLearnerServiceImpl(AccessTokenValidator accessTokenValidator, CassandraOperation cassandraOperation, CbPlanCacheMgr cbPlanCacheMgr,
-            CbExtServerProperties serverProperties, UserUtilityService userUtilityService, ContentInfoServiceImpl contentService,
-            EsUtilService esUtilService, RedisCacheMgr redisCacheMgr) {
+            ContentInfoServiceImpl contentService, RedisCacheMgr redisCacheMgr) {
         this.accessTokenValidator = accessTokenValidator;
         this.cassandraOperation = cassandraOperation;
         this.cbPlanCacheMgr = cbPlanCacheMgr;
-        this.serverProperties = serverProperties;
-        this.userUtilityService = userUtilityService;
         this.contentService = contentService;
-        this.esUtilService = esUtilService;
         this.redisCacheMgr = redisCacheMgr;
     }
 

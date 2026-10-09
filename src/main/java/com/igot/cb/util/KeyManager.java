@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
 import java.security.PublicKey;
 import java.security.spec.X509EncodedKeySpec;
@@ -65,7 +66,7 @@ public class KeyManager {
      * @return The loaded public key
      * @throws Exception If there's an error during the loading process
      */
-    public static PublicKey loadPublicKey(String key) throws Exception {
+    public static PublicKey loadPublicKey(String key) throws GeneralSecurityException {
         // Remove header and footer from the key string
         String publicKey = new String(key.getBytes(), StandardCharsets.UTF_8);
         // Remove header and footer from the key string

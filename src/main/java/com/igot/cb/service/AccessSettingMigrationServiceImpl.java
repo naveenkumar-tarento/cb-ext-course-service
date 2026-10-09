@@ -4,7 +4,6 @@ import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
 
 import com.igot.cb.elasticsearch.service.EsUtilService;
 import org.apache.commons.collections4.MapUtils;
@@ -146,7 +145,7 @@ public class AccessSettingMigrationServiceImpl {
                 cbPlanV2Map.put(Constants.UPDATED_AT, (Instant) cbPlanMap.get(Constants.UPDATED_AT));
                 cbPlanV2Map.put(Constants.UPDATED_BY, (String) cbPlanMap.get(Constants.UPDATED_BY));
 
-                String contextData = buildContextData(cbPlanId, orgId, assignmentType, assignmentTypeInfo);
+                String contextData = buildContextData(orgId, assignmentType, assignmentTypeInfo);
                 if (!StringUtils.hasLength(contextData)) {
                     skipped.incrementAndGet();
                     errors.add("planId=" + cbPlanId + ", error = Failed to build context data");
@@ -186,9 +185,9 @@ public class AccessSettingMigrationServiceImpl {
         Map<String, Object> sanitized = new HashMap<>();
         for (Map.Entry<String, Object> entry : input.entrySet()) {
             Object value = entry.getValue();
-            if (value instanceof Instant) {
+            if (value instanceof Instant instant) {
                 // Convert Instant → ISO String (e.g., 2025-09-02T09:30:56.446Z)
-                sanitized.put(entry.getKey(), DateTimeFormatter.ISO_INSTANT.format((Instant) value));
+                sanitized.put(entry.getKey(), DateTimeFormatter.ISO_INSTANT.format(instant));
             } else {
                 sanitized.put(entry.getKey(), value);
             }
@@ -280,13 +279,13 @@ public class AccessSettingMigrationServiceImpl {
                             .filter(Objects::nonNull)
                             .map(Object::toString)
                             .distinct()
-                            .collect(Collectors.toList());
+                            .toList();
                 } else if (criteriaValueObj instanceof Boolean) {
                     // Handle boolean values safely
                     criteriaValues = List.of(String.valueOf(criteriaValueObj));
-                } else if (criteriaValueObj instanceof String) {
+                } else if (criteriaValueObj instanceof String string) {
                     // Handle single string case
-                    criteriaValues = List.of((String) criteriaValueObj);
+                    criteriaValues = List.of(string);
                 }
 
                 if (CollectionUtils.isEmpty(criteriaValues)) {
@@ -338,7 +337,7 @@ public class AccessSettingMigrationServiceImpl {
         return bitSet;
     }
 
-    private String buildContextData(String cbPlanId, String orgId, String assignmentType, List<String> assignmentTypeInfo)
+    private String buildContextData(String orgId, String assignmentType, List<String> assignmentTypeInfo)
             throws JsonProcessingException {
 
         // accessControl.userGroups[0]
@@ -375,23 +374,7 @@ public class AccessSettingMigrationServiceImpl {
         // Final contextData
         Map<String, Object> contextData = new HashMap<>();
         contextData.put(Constants.ACCESS_CONTROL, accessControl);
-        
 
-        // We do have accessControlMap, let's create accessControlIdMap
-        /*Map<String, Object> accessControlIdMap = new HashMap<>();
-        boolean isSuccess = updateContextDataWithIdMap(cbPlanId, accessControl, accessControlIdMap);
-
-        if (!isSuccess) {
-            log.error("Failed to update context data with ID map for cbPlanId: {}", cbPlanId);
-            return "";
-        }
-        if (((List<Map<String, Object>>) accessControl
-                .get(Constants.USER_GROUPS))
-                .size() != ((List<Map<String, Object>>) accessControlIdMap.get(Constants.USER_GROUPS)).size()) {
-            log.error("User groups are missing in access control id map for cbPlanId: {}", cbPlanId);
-            return "";
-        }
-        contextData.put(Constants.ACCESS_CONTROL_ID, accessControlIdMap);*/
         return objectMapper.writeValueAsString(contextData);
     }
 

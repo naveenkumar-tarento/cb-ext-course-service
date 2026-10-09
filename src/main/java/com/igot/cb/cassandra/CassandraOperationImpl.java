@@ -21,8 +21,8 @@ import org.apache.commons.collections.MapUtils;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 
@@ -135,7 +135,7 @@ public class CassandraOperationImpl implements CassandraOperation {
 
     @Override
     public Map<String, Object> updateRecord(String keyspaceName, String tableName, Map<String, Object> updateAttributes,
-                                             Map<String, Object> compositeKey, Supplier<Boolean> preCommitValidator,
+                                             Map<String, Object> compositeKey, BooleanSupplier preCommitValidator,
                                              Runnable onCommitFailureRollback) {
         Map<String, Object> response = new HashMap<>();
         boolean validationPassed = false;
@@ -149,7 +149,7 @@ public class CassandraOperationImpl implements CassandraOperation {
                     .toArray(Relation[]::new));
             SimpleStatement statement = update.build();
 
-            if (!preCommitValidator.get()) {
+            if (!preCommitValidator.getAsBoolean()) {
                 String abortMsg = String.format("Update aborted for %s: pre-commit validation failed", tableName);
                 log.error(abortMsg);
                 response.put(Constants.RESPONSE, Constants.FAILED);

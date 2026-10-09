@@ -271,7 +271,7 @@ public class CbPlanServiceImpl {
             response.setResponseCode(HttpStatus.BAD_REQUEST);
             return;
         }
-        Map<String, Object> updatedRequest = prepareCbPlanForUpdate(updatedCbPlan, existingCbPlan, userId);
+        Map<String, Object> updatedRequest = prepareCbPlanForUpdate(updatedCbPlan, userId);
         Map<String, Object> resp = cassandraOperation.updateRecord(Constants.KEYSPACE_SUNBIRD,
                 Constants.TABLE_CB_PLAN_V2, updatedRequest, Map.of(Constants.PLAN_ID, cbPlanId));
         if (resp.get(Constants.RESPONSE).equals(Constants.SUCCESS)) {
@@ -445,7 +445,7 @@ public class CbPlanServiceImpl {
             requestValidator.validateContextData(existingCbPlan, isCCA, userOrgId, existingRootOrgIdsInCriteria, isAdmin);
             // Need to update live plan with draft data if any
             // Need to update lookup table entries
-            updatedRequest.putAll(prepareCbPlanForRePublish(existingCbPlan, incomingRequest, userId));
+            updatedRequest.putAll(prepareCbPlanForRePublish(existingCbPlan, incomingRequest));
             if (updatedRequest.containsKey(Constants.CONTEXT_DATA_REQUEST)) {
                 errors = requestValidator.validateContextData(updatedRequest, isCCA, userOrgId, rootOrgIdsInCriteria, isAdmin);
             }
@@ -1032,7 +1032,7 @@ public class CbPlanServiceImpl {
     }
 
     private Map<String, Object> prepareCbPlanForUpdate(Map<String, Object> incomingRequest,
-            Map<String, Object> existingCbPlan, String userId) throws JsonProcessingException {
+            String userId) throws JsonProcessingException {
         Map<String, Object> updatedRequest = new HashMap<>();
         updatedRequest.put(Constants.UPDATED_BY, userId);
         updatedRequest.put(Constants.UPDATED_AT, Instant.now());
@@ -1055,7 +1055,7 @@ public class CbPlanServiceImpl {
     }
 
     private Map<String, Object> prepareCbPlanForRePublish(Map<String, Object> existingCbPlan,
-            Map<String, Object> incomingRequest, String userId) throws JsonProcessingException {
+            Map<String, Object> incomingRequest) throws JsonProcessingException {
         Map<String, Object> dataInDraftObject = existingCbPlan.get(Constants.DRAFT_DATA) != null
                 ? mapper.readValue((String) existingCbPlan.get(Constants.DRAFT_DATA),
                         new TypeReference<Map<String, Object>>() {
@@ -1278,8 +1278,8 @@ public class CbPlanServiceImpl {
                 boolean existingIsApar = existingCbPlan.get(Constants.IS_APAR) != null
                         && (Boolean) existingCbPlan.get(Constants.IS_APAR);
                 // If existing is true, we cannot allow update to false
-                if (existingIsApar && incomingCbPlanRequest.get(field) != null
-                        && !(Boolean) incomingCbPlanRequest.get(field)) {
+                Boolean incomingIsApar = (Boolean) incomingCbPlanRequest.get(field);
+                if (existingIsApar && incomingIsApar != null && !incomingIsApar) {
                     response.getParams().setStatus(Constants.FAILED);
                     response.getParams().setErr("Cannot change isApar from true to false.");
                     response.setResponseCode(HttpStatus.BAD_REQUEST);

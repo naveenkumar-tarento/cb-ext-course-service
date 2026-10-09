@@ -49,7 +49,7 @@ class CbPlanLearnerServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new CbPlanLearnerServiceImpl(accessTokenValidator, cassandraOperation, cbPlanCacheMgr,
-                null, null, contentService, null, redisCacheMgr);
+                contentService, redisCacheMgr);
     }
 
 
@@ -741,9 +741,9 @@ class CbPlanLearnerServiceImplTest {
                 isCacheEnabled, new ArrayList<>());
 
         verify(redisCacheMgr).putInCache(
-                eq(Constants.CB_PLAN_REDIS_KEY_PREFIX + "user123" + Constants.BY_COURSE_SUFFIX), eq(""));
+                Constants.CB_PLAN_REDIS_KEY_PREFIX + "user123" + Constants.BY_COURSE_SUFFIX, "");
         verify(redisCacheMgr).putInCache(
-                eq(Constants.CB_PLAN_REDIS_KEY_PREFIX + "user123" + Constants.BY_PLANS_SUFFIX), eq(""));
+                Constants.CB_PLAN_REDIS_KEY_PREFIX + "user123" + Constants.BY_PLANS_SUFFIX, "");
     }
 
     @Test

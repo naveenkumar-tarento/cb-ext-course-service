@@ -122,7 +122,9 @@ public abstract class CharacterDecoder {
         ByteArrayInputStream inStream;
         ByteArrayOutputStream outStream;
 
-        inputString.getBytes(0, inputString.length(), inputBuffer, 0);
+        for (int i = 0; i < inputString.length(); i++) {
+            inputBuffer[i] = (byte) inputString.charAt(i);
+        }
         inStream = new ByteArrayInputStream(inputBuffer);
         outStream = new ByteArrayOutputStream();
         decodeBuffer(inStream, outStream);

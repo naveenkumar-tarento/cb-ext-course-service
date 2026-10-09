@@ -61,7 +61,7 @@ class ExternalTrainingServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new ExternalTrainingServiceImpl(storageService, serverConfig, kafkaTemplate, cassandraOperation,
-                accessTokenValidator, new ObjectMapper().registerModule(new JavaTimeModule()), userAndOrgService, userUtilityService);
+                accessTokenValidator, new ObjectMapper().registerModule(new JavaTimeModule()), userAndOrgService);
     }
 
     // ===========================

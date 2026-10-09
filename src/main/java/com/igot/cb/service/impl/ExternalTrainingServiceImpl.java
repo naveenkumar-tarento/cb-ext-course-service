@@ -6,7 +6,6 @@ import com.igot.cb.model.ApiResponse;
 import com.igot.cb.service.ExternalTrainingService;
 import com.igot.cb.service.UserAndOrgServiceImpl;
 import com.igot.cb.storage.service.StorageService;
-import com.igot.cb.user.UserUtilityService;
 import com.igot.cb.util.AccessTokenValidator;
 import com.igot.cb.util.CbExtServerProperties;
 import com.igot.cb.util.Constants;
@@ -56,12 +55,10 @@ public class ExternalTrainingServiceImpl implements ExternalTrainingService {
 
     private final UserAndOrgServiceImpl userAndOrgService;
 
-    private final UserUtilityService userUtilityService;
-
     public ExternalTrainingServiceImpl(StorageService storageService, CbExtServerProperties serverConfig,
             KafkaTemplate<String, String> kafkaTemplate, CassandraOperation cassandraOperation,
             AccessTokenValidator accessTokenValidator, ObjectMapper mapper,
-            UserAndOrgServiceImpl userAndOrgService, UserUtilityService userUtilityService) {
+            UserAndOrgServiceImpl userAndOrgService) {
         this.storageService = storageService;
         this.serverConfig = serverConfig;
         this.kafkaTemplate = kafkaTemplate;
@@ -69,7 +66,6 @@ public class ExternalTrainingServiceImpl implements ExternalTrainingService {
         this.accessTokenValidator = accessTokenValidator;
         this.mapper = mapper;
         this.userAndOrgService = userAndOrgService;
-        this.userUtilityService = userUtilityService;
     }
 
     @Override
@@ -234,8 +230,7 @@ public class ExternalTrainingServiceImpl implements ExternalTrainingService {
             }
             // 5. Row count validation
             int dataRowCount = 0;
-            String row;
-            while ((row = reader.readLine()) != null) {
+            while (reader.readLine() != null) {
                 dataRowCount++;
                 if (dataRowCount > externalTrainingBatchSize) {
                     return "CSV file should not contain more than " + externalTrainingBatchSize + " rows.";

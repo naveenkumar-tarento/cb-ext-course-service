@@ -73,15 +73,17 @@ class ExternalTrainingCertificateServiceImplTest {
 
     @Test
     void testGenerateCertificateEvent_nullUserDetailsMap() {
+        Map<String, Object> eventDetails = validEventDetails();
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> service.generateCertificateEvent(null, validEventDetails()));
+                () -> service.generateCertificateEvent(null, eventDetails));
         assertTrue(ex.getMessage().contains("Input map is null or empty"));
     }
 
     @Test
     void testGenerateCertificateEvent_emptyUserDetailsMap() {
+        Map<String, Object> eventDetails = validEventDetails();
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> service.generateCertificateEvent(new HashMap<>(), validEventDetails()));
+                () -> service.generateCertificateEvent(new HashMap<>(), eventDetails));
         assertTrue(ex.getMessage().contains("Input map is null or empty"));
     }
 
@@ -89,9 +91,10 @@ class ExternalTrainingCertificateServiceImplTest {
     void testGenerateCertificateEvent_missingUserId() {
         Map<String, Object> userDetails = validUserDetails();
         userDetails.remove(Constants.USER_ID);
+        Map<String, Object> eventDetails = validEventDetails();
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> service.generateCertificateEvent(userDetails, validEventDetails()));
+                () -> service.generateCertificateEvent(userDetails, eventDetails));
         assertTrue(ex.getMessage().contains("Missing required field: " + Constants.USER_ID));
     }
 
@@ -99,9 +102,10 @@ class ExternalTrainingCertificateServiceImplTest {
     void testGenerateCertificateEvent_blankFirstName() {
         Map<String, Object> userDetails = validUserDetails();
         userDetails.put(Constants.FIRSTNAME, "   ");
+        Map<String, Object> eventDetails = validEventDetails();
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> service.generateCertificateEvent(userDetails, validEventDetails()));
+                () -> service.generateCertificateEvent(userDetails, eventDetails));
         assertTrue(ex.getMessage().contains("Empty value for field: " + Constants.FIRSTNAME));
     }
 
@@ -109,9 +113,10 @@ class ExternalTrainingCertificateServiceImplTest {
     void testGenerateCertificateEvent_missingEventDetailsField() {
         Map<String, Object> eventDetails = validEventDetails();
         eventDetails.remove(Constants.BATCH_ID);
+        Map<String, Object> userDetails = validUserDetails();
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> service.generateCertificateEvent(validUserDetails(), eventDetails));
+                () -> service.generateCertificateEvent(userDetails, eventDetails));
         assertTrue(ex.getMessage().contains("Missing required field: " + Constants.BATCH_ID));
     }
 
@@ -134,9 +139,10 @@ class ExternalTrainingCertificateServiceImplTest {
     void testGenerateCertificateEventAndPushToKafka_invalidDataPropagatesException() {
         Map<String, Object> userDetails = validUserDetails();
         userDetails.remove(Constants.USER_ID);
+        Map<String, Object> eventDetails = validEventDetails();
 
         assertThrows(IllegalArgumentException.class,
-                () -> service.generateCertificateEventAndPushToKafka(userDetails, validEventDetails()));
+                () -> service.generateCertificateEventAndPushToKafka(userDetails, eventDetails));
 
         verifyNoInteractions(kafkaTemplate);
     }

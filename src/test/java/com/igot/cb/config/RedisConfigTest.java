@@ -9,6 +9,7 @@ import java.lang.reflect.Method;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import com.igot.cb.common.ServerProperties;
 import com.igot.cb.util.Constants;
 import com.igot.cb.util.PropertiesCache;
 
@@ -49,6 +50,18 @@ class RedisConfigTest {
 
         verify(mockPropertiesCache).getProperty(Constants.REDIS_HOST);
         verify(mockPropertiesCache).getProperty(Constants.REDIS_PORT);
+    }
+
+    @Test
+    void testJedisDataPoolCreation() {
+        ServerProperties serverProperties = new ServerProperties();
+        serverProperties.setRedisDataHost("localhost");
+        serverProperties.setRedisDataPort("6380");
+
+        JedisPool jedisDataPool = redisConfig.jedisDataPool(serverProperties);
+
+        assertNotNull(jedisDataPool);
+        assertEquals("false", System.getProperty("org.apache.commons.pool2.registerMbeans"));
     }
 
     @Test

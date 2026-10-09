@@ -166,7 +166,94 @@ class RedisCacheMgrTest {
         when(jedisPool.getResource()).thenThrow(new RuntimeException("Redis error"));
 
         assertDoesNotThrow(() -> redisCacheMgr.putInCache(key, value));
-        
+
+        verify(jedisPool).getResource();
+    }
+
+    @Test
+    void testPutInCacheWithCustomTtl_success() {
+        String key = "testKey";
+        String value = "testValue";
+        int customTtl = 300;
+
+        when(jedisPool.getResource()).thenReturn(jedis);
+        when(jedis.setex(key, customTtl, value)).thenReturn("OK");
+
+        assertDoesNotThrow(() -> redisCacheMgr.putInCache(key, value, customTtl));
+
+        verify(jedis).setex(key, customTtl, value);
+        verify(jedis).close();
+    }
+
+    @Test
+    void testPutInCacheWithCustomTtl_exception() {
+        String key = "testKey";
+        String value = "testValue";
+        int customTtl = 300;
+
+        when(jedisPool.getResource()).thenThrow(new RuntimeException("Redis error"));
+
+        assertDoesNotThrow(() -> redisCacheMgr.putInCache(key, value, customTtl));
+
+        verify(jedisPool).getResource();
+    }
+
+    @Test
+    void testGetFromCacheWithTtl_valuePresentAndTtlPositive_refreshesTtl() {
+        String key = "testKey";
+        String value = "testValue";
+        int customTtl = 300;
+
+        when(jedisPool.getResource()).thenReturn(jedis);
+        when(jedis.get(key)).thenReturn(value);
+        when(jedis.expire(key, customTtl)).thenReturn(1L);
+
+        String result = redisCacheMgr.getFromCache(key, customTtl);
+
+        assertEquals(value, result);
+        verify(jedis).expire(key, customTtl);
+        verify(jedis).close();
+    }
+
+    @Test
+    void testGetFromCacheWithTtl_valueNull_doesNotRefreshTtl() {
+        String key = "testKey";
+        int customTtl = 300;
+
+        when(jedisPool.getResource()).thenReturn(jedis);
+        when(jedis.get(key)).thenReturn(null);
+
+        String result = redisCacheMgr.getFromCache(key, customTtl);
+
+        assertNull(result);
+        verify(jedis, never()).expire(anyString(), anyInt());
+        verify(jedis).close();
+    }
+
+    @Test
+    void testGetFromCacheWithTtl_valuePresentButTtlNotPositive_doesNotRefreshTtl() {
+        String key = "testKey";
+        String value = "testValue";
+
+        when(jedisPool.getResource()).thenReturn(jedis);
+        when(jedis.get(key)).thenReturn(value);
+
+        String result = redisCacheMgr.getFromCache(key, 0);
+
+        assertEquals(value, result);
+        verify(jedis, never()).expire(anyString(), anyInt());
+        verify(jedis).close();
+    }
+
+    @Test
+    void testGetFromCacheWithTtl_exception() {
+        String key = "testKey";
+
+        when(jedisPool.getResource()).thenThrow(new RuntimeException("Redis error"));
+
+        String result = redisCacheMgr.getFromCache(key, 300);
+
+        assertNull(result);
         verify(jedisPool).getResource();
     }
 }

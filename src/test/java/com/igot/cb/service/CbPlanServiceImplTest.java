@@ -254,7 +254,7 @@ class CbPlanServiceImplTest {
         when(esUtilService.updateDocument(anyString(), anyString(), anyString(), anyMap(), anyString()))
             .thenReturn(null);
 
-        ArgumentCaptor<java.util.function.Supplier<Boolean>> validatorCaptor = ArgumentCaptor.forClass(java.util.function.Supplier.class);
+        ArgumentCaptor<java.util.function.BooleanSupplier> validatorCaptor = ArgumentCaptor.forClass(java.util.function.BooleanSupplier.class);
         Map<String, Object> abortedResp = new HashMap<>();
         abortedResp.put(Constants.RESPONSE, Constants.FAILED);
         abortedResp.put(Constants.ERROR_MESSAGE, "Update aborted: pre-commit validation failed");
@@ -263,7 +263,7 @@ class CbPlanServiceImplTest {
 
         ApiResponse response = cbPlanService.publishCbPlan(request, "orgId", "token", Arrays.asList("role"));
 
-        assertFalse(validatorCaptor.getValue().get());
+        assertFalse(validatorCaptor.getValue().getAsBoolean());
         assertEquals(Constants.FAILED, response.getParams().getStatus());
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
     }
