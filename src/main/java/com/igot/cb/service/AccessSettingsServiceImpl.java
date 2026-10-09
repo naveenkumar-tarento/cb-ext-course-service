@@ -52,34 +52,7 @@ public class AccessSettingsServiceImpl {
       setFailedResponse(response, errMsg);
       return response;
     }
-    try {
-      Map<String, Object> createPayloadWithUuid = createUserGroupIds(userGroupDetails);
-      Map<String, Object> accessRuleData = new HashMap<>();
-      accessRuleData.put(Constants.CONTEXT_ID, userGroupDetails.get(Constants.CONTENT_ID));
-      accessRuleData.put(Constants.CONTEXT_DATA, objectMapper.writeValueAsString(createPayloadWithUuid));
-      accessRuleData.put(Constants.IS_ARCHIVED, false);
-      if (accessSettingMigrationService.processAccessSettingRule(accessRuleData)) {
-        cassandraOperation.insertRecord(Constants.KEYSPACE_SUNBIRD_COURSE,
-            Constants.ACCESS_SETTINGS_RULES_TABLE_V2, accessRuleData);
-        response.getResult().put(Constants.MSG, Constants.CREATED_RULES);
-        // Remove all other keys, and put a single object after message
-        Map<String, Object> payload = new HashMap<>();
-        payload.put(Constants.ACCESS_CONTROL, createPayloadWithUuid.get(Constants.ACCESS_CONTROL));
-        // Remove all keys except message, then put the payload as a single entry
-        response.getResult().putAll(payload);
-        return response;
-      } else {
-        log.error("Failed to process access setting rule");
-        setFailedResponse(response, "Failed to process access setting rule to id-map",
-            HttpStatus.INTERNAL_SERVER_ERROR);
-        return response;
-      }
-    } catch (Exception e) {
-      log.error("Error while upserting access settings", e);
-      setFailedResponse(response, "Failed to create access settings: " + e.getMessage(),
-          HttpStatus.INTERNAL_SERVER_ERROR);
-      return response;
-    }
+    return createAndPersistAccessRule(userGroupDetails, response);
   }
 
   public ApiResponse read(String contentId) {
@@ -221,6 +194,17 @@ public class AccessSettingsServiceImpl {
           }
         }
       }
+    } catch (Exception e) {
+      log.error("Error while upserting access settings", e);
+      setFailedResponse(response, "Failed to create access settings: " + e.getMessage(),
+              HttpStatus.INTERNAL_SERVER_ERROR);
+      return response;
+    }
+    return createAndPersistAccessRule(userGroupDetails, response);
+  }
+
+  private ApiResponse createAndPersistAccessRule(Map<String, Object> userGroupDetails, ApiResponse response) {
+    try {
       Map<String, Object> createPayloadWithUuid = createUserGroupIds(userGroupDetails);
       Map<String, Object> accessRuleData = new HashMap<>();
       accessRuleData.put(Constants.CONTEXT_ID, userGroupDetails.get(Constants.CONTENT_ID));
