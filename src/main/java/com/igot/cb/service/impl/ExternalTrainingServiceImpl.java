@@ -229,6 +229,7 @@ public class ExternalTrainingServiceImpl implements ExternalTrainingService {
             }
             // 5. Row count validation
             int dataRowCount = 0;
+            @SuppressWarnings("java:S1481") // value intentionally unused: readLine() captured only to satisfy S2677
             String dataRow = null;
             while ((dataRow = reader.readLine()) != null) {
                 dataRowCount++;
