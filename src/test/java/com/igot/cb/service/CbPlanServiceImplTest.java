@@ -3103,4 +3103,484 @@ class CbPlanServiceImplTest {
         assertEquals("retiring now", captor.getValue().get(Constants.COMMENT));
     }
 
+    // ===================== Additional tests targeting remaining JaCoCo gaps =====================
+    // A Jackson bean whose getter always throws, used to force mapper.writeValueAsString(...) to raise
+    // a JsonProcessingException (JsonMappingException wraps the unchecked exception by default).
+    public static class ThrowingBean {
+        public String getValue() {
+            throw new RuntimeException("boom-serialize");
+        }
+    }
+
+    // ---- createCbPlan: getCCAFromOrg failure branch (line ~134) ----
+    @Test
+    void testCreateCbPlan_CcaCheckFails_ReturnsFailedBeforeValidation() {
+        ApiRequest request = new ApiRequest();
+        request.setRequest(new HashMap<>());
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("userId");
+        when(userUtilityService.readUserProfileFromDB(eq("userId"), anyList()))
+            .thenReturn(Map.of(Constants.ID, "userId", Constants.ROOT_ORG_ID, "root1"));
+        when(userUtilityService.readOrgFromDB(eq("root1"), any()))
+            .thenReturn(Collections.emptyMap());
+
+        ApiResponse response = cbPlanService.createCbPlan(request, "orgId", "token");
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
+        verify(requestValidator, never()).validateCbPlanCreateRequest(any(), anyBoolean(), anyString(), anyBoolean());
+    }
+
+    // ---- createCbPlan: generic Exception caught by the outer catch (line ~145-149) ----
+    @Test
+    void testCreateCbPlan_ValidatorThrowsRuntimeException_CaughtByGenericCatch() {
+        ApiRequest request = new ApiRequest();
+        request.setRequest(new HashMap<>());
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("userId");
+        when(userUtilityService.readUserProfileFromDB(eq("userId"), anyList()))
+            .thenReturn(Map.of(Constants.ID, "userId", Constants.ROOT_ORG_ID, "root1"));
+        when(userUtilityService.readOrgFromDB(eq("root1"), any()))
+            .thenReturn(Map.of(Constants.IS_CCA, false));
+        when(requestValidator.validateCbPlanCreateRequest(any(), anyBoolean(), anyString(), anyBoolean()))
+            .thenThrow(new RuntimeException("boom"));
+
+        ApiResponse response = cbPlanService.createCbPlan(request, "orgId", "token");
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
+        assertEquals("boom", response.getParams().getErr());
+    }
+
+    // ---- insertCbPlanAndRespond: catch(JsonProcessingException) branch (line ~183-187) ----
+    @Test
+    void testCreateCbPlan_ContextDataSerializationThrows_CaughtAsJsonProcessingException() {
+        ApiRequest request = new ApiRequest();
+        Map<String, Object> requestMap = new HashMap<>();
+        requestMap.put("name", "Test Plan");
+        requestMap.put("orgScope", "single");
+        requestMap.put("orgIdList", Arrays.asList("org1"));
+        requestMap.put("contentType", "Course");
+        requestMap.put("contentList", Arrays.asList("content1"));
+        requestMap.put(Constants.CONTEXT_DATA_REQUEST, new ThrowingBean());
+        request.setRequest(requestMap);
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("userId");
+        when(userUtilityService.readUserProfileFromDB(eq("userId"), anyList()))
+            .thenReturn(Map.of(Constants.ID, "userId", Constants.ROOT_ORG_ID, "root1"));
+        when(userUtilityService.readOrgFromDB(eq("root1"), any()))
+            .thenReturn(Map.of(Constants.IS_CCA, false));
+        when(requestValidator.validateCbPlanCreateRequest(any(), anyBoolean(), anyString(), anyBoolean()))
+            .thenReturn(Collections.emptyList());
+
+        ApiResponse response = cbPlanService.createCbPlan(request, "orgId", "token");
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
+        assertNotNull(response.getParams().getErr());
+        verify(cassandraOperation, never()).insertRecord(anyString(), anyString(), any());
+    }
+
+    // ---- updateCbPlan: existing plan lookup returns a list containing an empty map (line ~212-215) ----
+    @Test
+    void testUpdateCbPlan_ExistingPlanMapEmpty_ReturnsNotFound() {
+        ApiRequest request = new ApiRequest();
+        request.setRequest(Map.of(Constants.ID, "plan1"));
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("userId");
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), any(), any(), any()))
+            .thenReturn(Arrays.asList(new HashMap<>()));
+
+        ApiResponse response = cbPlanService.updateCbPlan(request, "orgId", "token", Arrays.asList("role"));
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertEquals(CbPlanServiceImplTest.CB_PLAN_NOT_FOUND_PREFIX + "plan1", response.getParams().getErr());
+    }
+
+    // ---- updateCbPlan: getCCAFromOrg failure branch (line ~234) ----
+    @Test
+    void testUpdateCbPlan_CcaCheckFails_ReturnsFailed() {
+        ApiRequest request = new ApiRequest();
+        request.setRequest(Map.of(Constants.ID, "plan1"));
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("userId");
+
+        Map<String, Object> existingPlan = new HashMap<>();
+        existingPlan.put(Constants.CREATED_BY, "userId");
+        existingPlan.put(Constants.STATUS, Constants.DRAFT);
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), any(), any(), any()))
+            .thenReturn(Arrays.asList(existingPlan));
+
+        when(userUtilityService.readUserProfileFromDB(eq("userId"), anyList()))
+            .thenReturn(Map.of(Constants.ID, "userId", Constants.ROOT_ORG_ID, "root1"));
+        when(userUtilityService.readOrgFromDB(eq("root1"), any()))
+            .thenReturn(Collections.emptyMap());
+
+        ApiResponse response = cbPlanService.updateCbPlan(request, "orgId", "token", Arrays.asList("role"));
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
+        verify(requestValidator, never()).validateCbPlanCreateRequest(any(), anyBoolean(), anyString());
+    }
+
+    // ---- updateCbPlan: LIVE plan whose handleUpdateOfLiveCbPlan call fails propagates the failure (line ~242-244) ----
+    @Test
+    void testUpdateCbPlan_LiveStatus_HandleUpdateFailurePropagates() {
+        ApiRequest request = new ApiRequest();
+        request.setRequest(Map.of(Constants.ID, "plan1", "name", "New Name"));
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("userId");
+
+        Map<String, Object> existingPlan = new HashMap<>();
+        existingPlan.put(Constants.CREATED_BY, "userId");
+        existingPlan.put(Constants.STATUS, Constants.LIVE);
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), any(), any(), any()))
+            .thenReturn(Arrays.asList(existingPlan));
+
+        when(userUtilityService.readUserProfileFromDB(eq("userId"), anyList()))
+            .thenReturn(Map.of(Constants.ID, "userId", Constants.ROOT_ORG_ID, "root1"));
+        when(userUtilityService.readOrgFromDB(eq("root1"), any()))
+            .thenReturn(Map.of(Constants.IS_CCA, false));
+        when(requestValidator.validateContextData(any(), anyBoolean(), anyString(), any()))
+            .thenReturn(Arrays.asList("ctx error"));
+
+        ApiResponse response = cbPlanService.updateCbPlan(request, "orgId", "token", Arrays.asList("role"));
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertTrue(response.getParams().getErr().contains("ctx error"));
+    }
+
+    // ---- updateCbPlan: DRAFT plan validation errors (line ~269-272) ----
+    @Test
+    void testUpdateCbPlan_DraftStatus_ValidationErrors_ReturnsBadRequest() {
+        ApiRequest request = new ApiRequest();
+        request.setRequest(Map.of(Constants.ID, "plan1"));
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("userId");
+
+        Map<String, Object> existingPlan = new HashMap<>();
+        existingPlan.put(Constants.CREATED_BY, "userId");
+        existingPlan.put(Constants.STATUS, Constants.DRAFT);
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), any(), any(), any()))
+            .thenReturn(Arrays.asList(existingPlan));
+
+        when(userUtilityService.readUserProfileFromDB(eq("userId"), anyList()))
+            .thenReturn(Map.of(Constants.ID, "userId", Constants.ROOT_ORG_ID, "root1"));
+        when(userUtilityService.readOrgFromDB(eq("root1"), any()))
+            .thenReturn(Map.of(Constants.IS_CCA, false));
+        when(requestValidator.validateCbPlanCreateRequest(any(), anyBoolean(), anyString()))
+            .thenReturn(Arrays.asList("draft err"));
+
+        ApiResponse response = cbPlanService.updateCbPlan(request, "orgId", "token", Arrays.asList("role"));
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertTrue(response.getParams().getErr().contains("draft err"));
+    }
+
+    // ---- updateCbPlan: DRAFT plan whose cassandra update fails (line ~293-295) ----
+    @Test
+    void testUpdateCbPlan_DraftStatus_CassandraUpdateFails_ReturnsBadRequest() {
+        ApiRequest request = new ApiRequest();
+        request.setRequest(Map.of(Constants.ID, "plan1"));
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("userId");
+
+        Map<String, Object> existingPlan = new HashMap<>();
+        existingPlan.put(Constants.CREATED_BY, "userId");
+        existingPlan.put(Constants.STATUS, Constants.DRAFT);
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), any(), any(), any()))
+            .thenReturn(Arrays.asList(existingPlan));
+
+        when(userUtilityService.readUserProfileFromDB(eq("userId"), anyList()))
+            .thenReturn(Map.of(Constants.ID, "userId", Constants.ROOT_ORG_ID, "root1"));
+        when(userUtilityService.readOrgFromDB(eq("root1"), any()))
+            .thenReturn(Map.of(Constants.IS_CCA, false));
+        when(requestValidator.validateCbPlanCreateRequest(any(), anyBoolean(), anyString()))
+            .thenReturn(Collections.emptyList());
+
+        Map<String, Object> failResp = new HashMap<>();
+        failResp.put(Constants.RESPONSE, Constants.FAILED);
+        when(cassandraOperation.updateRecord(anyString(), anyString(), anyMap(), anyMap())).thenReturn(failResp);
+
+        ApiResponse response = cbPlanService.updateCbPlan(request, "orgId", "token", Arrays.asList("role"));
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertEquals(CbPlanServiceImplTest.CB_PLAN_NOT_FOUND_PREFIX + "plan1", response.getParams().getErr());
+    }
+
+    // ---- publishCbPlan: getCCAFromOrg failure branch (line ~359) ----
+    @Test
+    void testPublishCbPlan_CcaCheckFails_ReturnsFailed() {
+        ApiRequest request = new ApiRequest();
+        request.setRequest(Map.of(Constants.ID, "plan1"));
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("userId");
+
+        Map<String, Object> existingPlan = new HashMap<>();
+        existingPlan.put(Constants.CREATED_BY, "userId");
+        existingPlan.put(Constants.STATUS, Constants.DRAFT);
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), any(), any(), any()))
+            .thenReturn(Arrays.asList(existingPlan));
+
+        when(userUtilityService.readUserProfileFromDB(eq("userId"), anyList()))
+            .thenReturn(Map.of(Constants.ID, "userId", Constants.ROOT_ORG_ID, "root1"));
+        when(userUtilityService.readOrgFromDB(eq("root1"), any()))
+            .thenReturn(Collections.emptyMap());
+
+        ApiResponse response = cbPlanService.publishCbPlan(request, "orgId", "token", Arrays.asList("role"));
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
+    }
+
+    // ---- publishCbPlan -> loadAndAuthorizePublishPlan: existing plan is an empty map (line ~421-424) ----
+    @Test
+    void testPublishCbPlan_ExistingPlanMapEmpty_ReturnsNotFound() {
+        ApiRequest request = new ApiRequest();
+        request.setRequest(Map.of(Constants.ID, "plan1"));
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("userId");
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), any(), any(), any()))
+            .thenReturn(Arrays.asList(new HashMap<>()));
+
+        ApiResponse response = cbPlanService.publishCbPlan(request, "orgId", "token", Arrays.asList("role"));
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertEquals(CbPlanServiceImplTest.CB_PLAN_NOT_FOUND_PREFIX + "plan1", response.getParams().getErr());
+    }
+
+    // ---- handlePublishLookupUpdates: removal-of-previously-custom/single orgIds failure (line ~518-521) ----
+    @Test
+    void testHandlePublishLookupUpdates_RemovalOfCustomScopeOrgsFails() {
+        Map<String, Object> resp = Map.of(Constants.RESPONSE, Constants.SUCCESS);
+        // No ORG_SCOPE key at all => the initial add/upsert block (SINGLE/CUSTOM/ALL) is skipped entirely,
+        // isolating the "removed orgIds" branch below.
+        Map<String, Object> updatedRequest = new HashMap<>();
+
+        ApiResponse bulkResp = new ApiResponse();
+        bulkResp.getParams().setStatus(Constants.FAILED);
+        bulkResp.getParams().setErr("removal failed");
+        when(cassandraOperation.insertBulkRecord(anyString(), anyString(), anyList())).thenReturn(bulkResp);
+
+        Set<String> rootOrgIdsInCriteria = new HashSet<>();
+        Set<String> existingRootOrgIdsInCriteria = new HashSet<>(Set.of("orgA"));
+        ApiResponse response = new ApiResponse();
+        response.setParams(new ApiRespParam());
+
+        ReflectionTestUtils.invokeMethod(cbPlanService, "handlePublishLookupUpdates",
+            resp, updatedRequest, Constants.CUSTOM, rootOrgIdsInCriteria, existingRootOrgIdsInCriteria, "plan1", response);
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
+        assertEquals("removal failed", response.getParams().getErr());
+        verify(cassandraOperation, times(1)).insertBulkRecord(anyString(), anyString(), anyList());
+    }
+
+    // ---- parseToDate -> parseDateString: full ISO-8601 datetime parses directly via Instant.parse (line ~674) ----
+    @Test
+    void testParseToDate_FullIsoDateTimeString_UsesDirectInstantParse() {
+        Date result = cbPlanService.parseToDate("2024-12-31T10:15:30Z");
+
+        assertNotNull(result);
+        assertEquals(Date.from(Instant.parse("2024-12-31T10:15:30Z")), result);
+    }
+
+    // ---- retireCbPlan: blank (non-null) cbPlanId (line ~862-866) ----
+    @Test
+    void testRetireCbPlan_BlankId_ReturnsBadRequest() {
+        ApiRequest request = new ApiRequest();
+        Map<String, Object> requestMap = new HashMap<>();
+        requestMap.put(Constants.ID, "");
+        request.setRequest(requestMap);
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("userId");
+
+        ApiResponse response = cbPlanService.retireCbPlan(request, "orgId", "token", Arrays.asList("role"));
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertEquals("CbPlanId is missing.", response.getParams().getErr());
+    }
+
+    // ---- retireExistingCbPlan: not authorized branch (line ~892-897) ----
+    @Test
+    void testRetireCbPlan_NotAuthorized_ReturnsBadRequest() {
+        ApiRequest request = new ApiRequest();
+        request.setRequest(Map.of(Constants.ID, "plan1"));
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("userId");
+
+        Map<String, Object> existingPlan = new HashMap<>();
+        existingPlan.put(Constants.CREATED_BY, "otherUser");
+        existingPlan.put(Constants.STATUS, "live");
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), any(), any(), any()))
+            .thenReturn(Arrays.asList(existingPlan));
+        when(serverProperties.getCbPlanUpdatePublishAuthorizedRoles()).thenReturn(Arrays.asList("admin"));
+
+        ApiResponse response = cbPlanService.retireCbPlan(request, "orgId", "token", Arrays.asList("user"));
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertEquals("Not Authorized to delete cbp Plan", response.getParams().getErr());
+    }
+
+    // ---- retireExistingCbPlan: cassandra update failure (line ~917-921) ----
+    @Test
+    void testRetireCbPlan_CassandraUpdateFails_ReturnsBadRequest() {
+        ApiRequest request = new ApiRequest();
+        request.setRequest(Map.of(Constants.ID, "plan1"));
+
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("userId");
+
+        Map<String, Object> existingPlan = new HashMap<>();
+        existingPlan.put(Constants.CREATED_BY, "userId");
+        existingPlan.put(Constants.STATUS, "live");
+        when(cassandraOperation.getRecordsByProperties(anyString(), anyString(), any(), any(), any()))
+            .thenReturn(Arrays.asList(existingPlan));
+
+        Map<String, Object> failResp = new HashMap<>();
+        failResp.put(Constants.RESPONSE, Constants.FAILED);
+        failResp.put(Constants.ERROR_MESSAGE, "db error");
+        when(cassandraOperation.updateRecord(anyString(), anyString(), anyMap(), anyMap())).thenReturn(failResp);
+
+        ApiResponse response = cbPlanService.retireCbPlan(request, "orgId", "token", Arrays.asList("role"));
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
+        assertTrue(response.getParams().getErr().contains("db error"));
+        assertTrue(response.getParams().getErr().contains("plan1"));
+    }
+
+    // ---- prepareCbPlanForInsert: PLAN_TYPE present in incoming request (line ~1028-1030) ----
+    @Test
+    void testPrepareCbPlanForInsert_WithPlanType_IncludesPlanType() {
+        Map<String, Object> incomingRequest = new HashMap<>();
+        incomingRequest.put(Constants.PLAN_TYPE, "nomination");
+
+        Map<String, Object> result = ReflectionTestUtils.invokeMethod(
+            cbPlanService, "prepareCbPlanForInsert", incomingRequest, "user123");
+
+        assertNotNull(result);
+        assertEquals("nomination", result.get(Constants.PLAN_TYPE));
+    }
+
+    // ---- prepareCbPlanForUpdate: PLAN_TYPE present in incoming request (line ~1051-1053) ----
+    @Test
+    void testPrepareCbPlanForUpdate_WithPlanType_IncludesPlanType() {
+        Map<String, Object> incomingRequest = new HashMap<>();
+        incomingRequest.put(Constants.PLAN_TYPE, "nomination");
+
+        Map<String, Object> result = ReflectionTestUtils.invokeMethod(
+            cbPlanService, "prepareCbPlanForUpdate", incomingRequest, "user123");
+
+        assertNotNull(result);
+        assertEquals("nomination", result.get(Constants.PLAN_TYPE));
+    }
+
+    // ---- prepareCbPlanForRePublish: existing plan has no draftData => empty map short-circuit (line ~1059-1065) ----
+    @Test
+    void testPrepareCbPlanForRePublish_NoDraftData_ReturnsEmptyMap() {
+        Map<String, Object> existingCbPlan = new HashMap<>(); // no DRAFT_DATA key
+        Map<String, Object> incomingRequest = new HashMap<>();
+        incomingRequest.put(Constants.COMMENT, "republish");
+
+        Map<String, Object> result = ReflectionTestUtils.invokeMethod(
+            cbPlanService, "prepareCbPlanForRePublish", existingCbPlan, incomingRequest);
+
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
+    }
+
+    // ---- prepareCbPlanForRePublish: draft data includes CONTENT_LIST and PLAN_TYPE (line ~1090-1096) ----
+    @Test
+    void testPrepareCbPlanForRePublish_WithContentListAndPlanType_IncludesBoth() throws Exception {
+        Map<String, Object> draftData = new HashMap<>();
+        draftData.put(Constants.CONTENT_LIST, Arrays.asList("c1", "c2"));
+        draftData.put(Constants.PLAN_TYPE, "custom-type");
+
+        Map<String, Object> existingCbPlan = new HashMap<>();
+        existingCbPlan.put(Constants.DRAFT_DATA, new ObjectMapper().writeValueAsString(draftData));
+
+        Map<String, Object> incomingRequest = new HashMap<>();
+        incomingRequest.put(Constants.COMMENT, "republish");
+
+        Map<String, Object> result = ReflectionTestUtils.invokeMethod(
+            cbPlanService, "prepareCbPlanForRePublish", existingCbPlan, incomingRequest);
+
+        assertNotNull(result);
+        assertEquals(Arrays.asList("c1", "c2"), result.get(Constants.CONTENT_LIST));
+        assertEquals("custom-type", result.get(Constants.PLAN_TYPE));
+    }
+
+    // ---- searchCbPlan: ES returns a non-null but empty data list => falls through to the default-status return (line ~804) ----
+    @Test
+    void testSearchCbPlan_EmptyDataList_SkipsEnrichmentAndReturnsDefaultResponse() {
+        SearchCriteria criteria = new SearchCriteria();
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any())).thenReturn("userId");
+
+        SearchResult searchResult = new SearchResult();
+        searchResult.setData(new ArrayList<>());
+        when(esUtilService.searchDocuments(anyString(), any(), anyString())).thenReturn(searchResult);
+
+        ApiResponse response = cbPlanService.searchCbPlan(criteria, "orgId", "token");
+
+        assertNotNull(response);
+        assertFalse(response.containsKey(Constants.RESULT));
+        verify(contentService, never()).enrichContentInfoForCBPlan(any());
+    }
+
+    // ---- handleUpdateOfLiveCbPlan: catch(JsonProcessingException) when draft serialization fails (line ~1263-1267) ----
+    @Test
+    void testHandleUpdateOfLiveCbPlan_SerializationFails_CaughtAsJsonProcessingException() {
+        ApiResponse response = new ApiResponse();
+        response.setParams(new ApiRespParam());
+        Map<String, Object> incomingRequest = new HashMap<>();
+        incomingRequest.put("badField", new ThrowingBean());
+        Map<String, Object> existingPlan = Map.of(Constants.PLAN_ID, "plan1");
+
+        when(requestValidator.validateContextData(any(), anyBoolean(), anyString(), any()))
+            .thenReturn(Collections.emptyList());
+        when(serverProperties.getCbPlanUpdateAllowedFields())
+            .thenReturn(Arrays.asList("badField"));
+
+        ReflectionTestUtils.invokeMethod(cbPlanService, "handleUpdateOfLiveCbPlan",
+            response, incomingRequest, existingPlan, "user1", "rootOrg1", false);
+
+        assertEquals(Constants.FAILED, response.getParams().getStatus());
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
+        assertEquals("Error processing existing CB Plan data", response.getParams().getErr());
+    }
+
+    // ---- populateUpdatedCbPlanFields: allowed field absent from incoming request hits "continue" (line ~1274-1276) ----
+    @Test
+    void testHandleUpdateOfLiveCbPlan_FieldNotInRequest_SkipsAndSucceeds() {
+        ApiResponse response = new ApiResponse();
+        response.setParams(new ApiRespParam());
+        response.setResult(new HashMap<>());
+        // "missingField" is allowed but absent from the incoming request => the loop must "continue" over it.
+        Map<String, Object> incomingRequest = Map.of("name", "Updated Plan");
+        Map<String, Object> existingPlan = Map.of(Constants.PLAN_ID, "plan1");
+
+        when(requestValidator.validateContextData(any(), anyBoolean(), anyString(), any()))
+            .thenReturn(Collections.emptyList());
+        when(serverProperties.getCbPlanUpdateAllowedFields())
+            .thenReturn(Arrays.asList("missingField", "name"));
+
+        Map<String, Object> updateResp = Map.of(Constants.RESPONSE, Constants.SUCCESS);
+        when(cassandraOperation.updateRecord(anyString(), anyString(), any(), any()))
+            .thenReturn(updateResp);
+
+        ReflectionTestUtils.invokeMethod(cbPlanService, "handleUpdateOfLiveCbPlan",
+            response, incomingRequest, existingPlan, "user1", "rootOrg1", false);
+
+        assertEquals(Constants.UPDATED, response.getResult().get(Constants.STATUS));
+    }
+
+    private static final String CB_PLAN_NOT_FOUND_PREFIX = "cbPlan is not found for id: ";
+
 }

@@ -937,6 +937,31 @@ class ExternalTrainingBulkUploadConsumerTest {
         verifyNoInteractions(storageService, cassandraOperation);
     }
 
+    @Test
+    void testProcessExternalTrainingBulkUploadMessage_asyncTaskThrowsIOException_wrappedAsCustomException() throws Exception {
+        ConsumerRecord<String, String> kafkaRecord = new ConsumerRecord<>("topic", 0, 0L, "key", "{}");
+        doThrow(new IOException("boom")).when(consumer).initiateExternalTrainingBulkUploadProcess(anyString());
+
+        assertDoesNotThrow(() -> consumer.processExternalTrainingBulkUploadMessage(kafkaRecord));
+
+        // give the CompletableFuture.runAsync task time to run and throw the wrapped CustomException
+        // on the common pool; the exception is not propagated back to this thread.
+        Thread.sleep(300);
+
+        verify(consumer).initiateExternalTrainingBulkUploadProcess("{}");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void testProcessExternalTrainingBulkUploadMessage_valueAccessThrows_hitsOuterCatch() {
+        ConsumerRecord<String, String> kafkaRecord = mock(ConsumerRecord.class);
+        when(kafkaRecord.value()).thenReturn("non-blank").thenThrow(new RuntimeException("boom"));
+
+        assertDoesNotThrow(() -> consumer.processExternalTrainingBulkUploadMessage(kafkaRecord));
+
+        verifyNoInteractions(storageService, cassandraOperation);
+    }
+
     // ===========================
     // PROCESS EXTERNAL TRAINING BULK UPLOAD (private, full file-processing flow)
     // ===========================

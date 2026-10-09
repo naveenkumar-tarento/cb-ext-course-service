@@ -335,4 +335,219 @@ class RequestValidatorTest {
         List<String> errors = requestValidator.validateContextData(req, false, "org1");
         assertFalse(errors.stream().anyMatch(e -> e.contains("No ROOT_ORG_ID found in criteria")));
     }
+
+    @Test
+    void testValidateCbPlanCreateRequest_validPlanCallsValidateContextData() {
+        ApiRequest apiRequest = new ApiRequest();
+        Map<String, Object> req = new HashMap<>();
+        req.put("name", "Plan1");
+        req.put("contentType", "course");
+        req.put("contentList", Arrays.asList("c1"));
+        req.put("endDate", "2026-01-01");
+        Map<String, Object> contextData = new HashMap<>(); // no accessControl -> validateContextData path exercised
+        req.put(Constants.CONTEXT_DATA_REQUEST, contextData);
+        apiRequest.setRequest(req);
+        List<String> errors = requestValidator.validateCbPlanCreateRequest(apiRequest, false, "org1", true);
+        assertFalse(errors.stream().anyMatch(e -> e.contains("Validation Error:") && e.contains("must not be")));
+        assertTrue(errors.stream().anyMatch(e -> e.contains("accessControl is missing in contextData")));
+    }
+
+    @Test
+    void testValidateCbPlanRequest_isAparAlreadyTrueSetsRequestFlagTrue() {
+        Map<String, Object> req = new HashMap<>();
+        req.put("isApar", true);
+        requestValidator.validateCbPlanRequest(req);
+        assertEquals(Boolean.TRUE, req.get(Constants.IS_APAR));
+    }
+
+    @Test
+    void testValidateContextData_fourArgOverloadWithNonNullRootOrgIdsInCriteria() {
+        Map<String, Object> criteria = new HashMap<>();
+        criteria.put(Constants.CRITERIA_KEY, Constants.ROOT_ORG_ID);
+        criteria.put(Constants.CRITERIA_VALUE, "org1");
+        List<Map<String, Object>> criteriaList = new ArrayList<>();
+        criteriaList.add(criteria);
+        Map<String, Object> userGroup = new HashMap<>();
+        userGroup.put(Constants.USER_GROUP_CRITERIA_LIST, criteriaList);
+        List<Map<String, Object>> userGroups = new ArrayList<>();
+        userGroups.add(userGroup);
+        Map<String, Object> accessControl = new HashMap<>();
+        accessControl.put(Constants.USER_GROUPS, userGroups);
+        Map<String, Object> contextData = new HashMap<>();
+        contextData.put(Constants.ACCESS_CONTROL, accessControl);
+        Map<String, Object> req = new HashMap<>();
+        req.put(Constants.CONTEXT_DATA_REQUEST, contextData);
+        List<String> errors = requestValidator.validateContextData(req, false, "org1", new HashSet<>());
+        assertTrue(errors.isEmpty());
+        assertEquals(Constants.SINGLE, req.get(Constants.ORG_SCOPE));
+    }
+
+    @Test
+    void testValidateContextData_contextDataKeyEntirelyMissing() {
+        Map<String, Object> req = new HashMap<>();
+        List<String> errors = requestValidator.validateContextData(req, false, "org1");
+        assertTrue(errors.stream().anyMatch(e -> e.contains("contextData is missing in request")));
+    }
+
+    @Test
+    void testValidateContextData_contextDataNonEmptyMissingAccessControlKey() {
+        Map<String, Object> contextData = new HashMap<>();
+        contextData.put("someOtherKey", "someValue");
+        Map<String, Object> req = new HashMap<>();
+        req.put(Constants.CONTEXT_DATA_REQUEST, contextData);
+        List<String> errors = requestValidator.validateContextData(req, false, "org1");
+        assertTrue(errors.stream().anyMatch(e -> e.contains("accessControl is missing in contextData")));
+    }
+
+    @Test
+    void testValidateContextData_contextDataStringParseSuccess() {
+        String contextDataJson = "{\"accessControl\":{\"userGroups\":[{\"userGroupCriteriaList\":"
+                + "[{\"criteriaKey\":\"rootOrgId\",\"criteriaValue\":\"org1\"}]}]}}";
+        Map<String, Object> req = new HashMap<>();
+        req.put(Constants.CONTEXT_DATA_REQUEST, contextDataJson);
+        List<String> errors = requestValidator.validateContextData(req, false, "org1");
+        assertTrue(errors.isEmpty());
+        assertEquals(Constants.SINGLE, req.get(Constants.ORG_SCOPE));
+    }
+
+    @Test
+    void testValidateContextData_targetedOrganisationCriteriaKey() {
+        Map<String, Object> criteria = new HashMap<>();
+        criteria.put(Constants.CRITERIA_KEY, Constants.TARGETED_ORGANISATION);
+        criteria.put(Constants.CRITERIA_VALUE, "org1");
+        List<Map<String, Object>> criteriaList = new ArrayList<>();
+        criteriaList.add(criteria);
+        Map<String, Object> userGroup = new HashMap<>();
+        userGroup.put(Constants.USER_GROUP_CRITERIA_LIST, criteriaList);
+        List<Map<String, Object>> userGroups = new ArrayList<>();
+        userGroups.add(userGroup);
+        Map<String, Object> accessControl = new HashMap<>();
+        accessControl.put(Constants.USER_GROUPS, userGroups);
+        Map<String, Object> contextData = new HashMap<>();
+        contextData.put(Constants.ACCESS_CONTROL, accessControl);
+        Map<String, Object> req = new HashMap<>();
+        req.put(Constants.CONTEXT_DATA_REQUEST, contextData);
+        List<String> errors = requestValidator.validateContextData(req, false, "org1");
+        assertTrue(errors.isEmpty());
+        assertEquals(Constants.SINGLE, req.get(Constants.ORG_SCOPE));
+    }
+
+    @Test
+    void testValidateContextData_criteriaValueAsList() {
+        Map<String, Object> criteria = new HashMap<>();
+        criteria.put(Constants.CRITERIA_KEY, Constants.ROOT_ORG_ID);
+        criteria.put(Constants.CRITERIA_VALUE, Arrays.asList("org1"));
+        List<Map<String, Object>> criteriaList = new ArrayList<>();
+        criteriaList.add(criteria);
+        Map<String, Object> userGroup = new HashMap<>();
+        userGroup.put(Constants.USER_GROUP_CRITERIA_LIST, criteriaList);
+        List<Map<String, Object>> userGroups = new ArrayList<>();
+        userGroups.add(userGroup);
+        Map<String, Object> accessControl = new HashMap<>();
+        accessControl.put(Constants.USER_GROUPS, userGroups);
+        Map<String, Object> contextData = new HashMap<>();
+        contextData.put(Constants.ACCESS_CONTROL, accessControl);
+        Map<String, Object> req = new HashMap<>();
+        req.put(Constants.CONTEXT_DATA_REQUEST, contextData);
+        List<String> errors = requestValidator.validateContextData(req, false, "org1");
+        assertTrue(errors.isEmpty());
+        assertEquals(Arrays.asList("org1"), req.get(Constants.ORG_ID_LIST));
+    }
+
+    @Test
+    void testValidateContextData_CCA_restrictionErrorWhenSomeGroupMissingRootOrgCriteria() {
+        Map<String, Object> criteria1 = new HashMap<>();
+        criteria1.put(Constants.CRITERIA_KEY, Constants.ROOT_ORG_ID);
+        criteria1.put(Constants.CRITERIA_VALUE, "orgA");
+        List<Map<String, Object>> criteriaList1 = new ArrayList<>();
+        criteriaList1.add(criteria1);
+        Map<String, Object> userGroup1 = new HashMap<>();
+        userGroup1.put(Constants.USER_GROUP_CRITERIA_LIST, criteriaList1);
+
+        Map<String, Object> criteria2 = new HashMap<>();
+        criteria2.put(Constants.CRITERIA_KEY, "otherKey");
+        criteria2.put(Constants.CRITERIA_VALUE, "value");
+        List<Map<String, Object>> criteriaList2 = new ArrayList<>();
+        criteriaList2.add(criteria2);
+        Map<String, Object> userGroup2 = new HashMap<>();
+        userGroup2.put(Constants.USER_GROUP_CRITERIA_LIST, criteriaList2);
+
+        List<Map<String, Object>> userGroups = Arrays.asList(userGroup1, userGroup2);
+        Map<String, Object> accessControl = new HashMap<>();
+        accessControl.put(Constants.USER_GROUPS, userGroups);
+        Map<String, Object> contextData = new HashMap<>();
+        contextData.put(Constants.ACCESS_CONTROL, accessControl);
+        Map<String, Object> req = new HashMap<>();
+        req.put(Constants.CONTEXT_DATA_REQUEST, contextData);
+        List<String> errors = requestValidator.validateContextData(req, true, "org1");
+        assertTrue(errors.contains("User group restriction for all org"));
+    }
+
+    @Test
+    void testValidateContextData_CCA_singleRootOrgId_orgScopeSingle() {
+        Map<String, Object> criteria = new HashMap<>();
+        criteria.put(Constants.CRITERIA_KEY, Constants.ROOT_ORG_ID);
+        criteria.put(Constants.CRITERIA_VALUE, "orgA");
+        List<Map<String, Object>> criteriaList = new ArrayList<>();
+        criteriaList.add(criteria);
+        Map<String, Object> userGroup = new HashMap<>();
+        userGroup.put(Constants.USER_GROUP_CRITERIA_LIST, criteriaList);
+        List<Map<String, Object>> userGroups = new ArrayList<>();
+        userGroups.add(userGroup);
+        Map<String, Object> accessControl = new HashMap<>();
+        accessControl.put(Constants.USER_GROUPS, userGroups);
+        Map<String, Object> contextData = new HashMap<>();
+        contextData.put(Constants.ACCESS_CONTROL, accessControl);
+        Map<String, Object> req = new HashMap<>();
+        req.put(Constants.CONTEXT_DATA_REQUEST, contextData);
+        List<String> errors = requestValidator.validateContextData(req, true, "org1");
+        assertTrue(errors.isEmpty());
+        assertEquals(Constants.SINGLE, req.get(Constants.ORG_SCOPE));
+    }
+
+    @Test
+    void testValidateContextData_CCA_multipleRootOrgIds_orgScopeCustom() {
+        Map<String, Object> criteria1 = new HashMap<>();
+        criteria1.put(Constants.CRITERIA_KEY, Constants.ROOT_ORG_ID);
+        criteria1.put(Constants.CRITERIA_VALUE, "orgA");
+        Map<String, Object> criteria2 = new HashMap<>();
+        criteria2.put(Constants.CRITERIA_KEY, Constants.ROOT_ORG_ID);
+        criteria2.put(Constants.CRITERIA_VALUE, "orgB");
+        List<Map<String, Object>> criteriaList = Arrays.asList(criteria1, criteria2);
+        Map<String, Object> userGroup = new HashMap<>();
+        userGroup.put(Constants.USER_GROUP_CRITERIA_LIST, criteriaList);
+        List<Map<String, Object>> userGroups = new ArrayList<>();
+        userGroups.add(userGroup);
+        Map<String, Object> accessControl = new HashMap<>();
+        accessControl.put(Constants.USER_GROUPS, userGroups);
+        Map<String, Object> contextData = new HashMap<>();
+        contextData.put(Constants.ACCESS_CONTROL, accessControl);
+        Map<String, Object> req = new HashMap<>();
+        req.put(Constants.CONTEXT_DATA_REQUEST, contextData);
+        List<String> errors = requestValidator.validateContextData(req, true, "org1");
+        assertTrue(errors.isEmpty());
+        assertEquals(Constants.CUSTOM, req.get(Constants.ORG_SCOPE));
+    }
+
+    @Test
+    void testValidateContextData_isAdminBypassesRootOrgIdMismatch() {
+        Map<String, Object> criteria = new HashMap<>();
+        criteria.put(Constants.CRITERIA_KEY, Constants.ROOT_ORG_ID);
+        criteria.put(Constants.CRITERIA_VALUE, "orgB");
+        List<Map<String, Object>> criteriaList = new ArrayList<>();
+        criteriaList.add(criteria);
+        Map<String, Object> userGroup = new HashMap<>();
+        userGroup.put(Constants.USER_GROUP_CRITERIA_LIST, criteriaList);
+        List<Map<String, Object>> userGroups = new ArrayList<>();
+        userGroups.add(userGroup);
+        Map<String, Object> accessControl = new HashMap<>();
+        accessControl.put(Constants.USER_GROUPS, userGroups);
+        Map<String, Object> contextData = new HashMap<>();
+        contextData.put(Constants.ACCESS_CONTROL, accessControl);
+        Map<String, Object> req = new HashMap<>();
+        req.put(Constants.CONTEXT_DATA_REQUEST, contextData);
+        List<String> errors = requestValidator.validateContextData(req, false, "orgA", null, true);
+        assertTrue(errors.isEmpty());
+        assertEquals(Constants.SINGLE, req.get(Constants.ORG_SCOPE));
+    }
 }

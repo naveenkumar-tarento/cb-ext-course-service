@@ -132,6 +132,17 @@ class ExternalTrainingServiceImplTest {
         assertEquals("Error while reading CSV file.", service.validateCsvFile(file));
     }
 
+    @Test
+    void testValidateCsvFile_headerMissing_emptyStream() throws IOException {
+        // Non-empty file (isEmpty() = false) but the input stream yields no lines at all,
+        // so reader.readLine() returns null on the very first call.
+        MultipartFile file = mock(MultipartFile.class);
+        when(file.isEmpty()).thenReturn(false);
+        when(file.getOriginalFilename()).thenReturn("test.csv");
+        when(file.getInputStream()).thenReturn(new java.io.ByteArrayInputStream(new byte[0]));
+        assertEquals("CSV header is missing. Expected header: Email", service.validateCsvFile(file));
+    }
+
     // ===========================
     // externalTrainingUserBulkUpload
     // ===========================
@@ -170,6 +181,22 @@ class ExternalTrainingServiceImplTest {
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, result.getResponseCode());
         assertEquals(Constants.FAILED, result.getParams().getStatus());
         assertTrue(result.getParams().getErrMsg().contains("No event batch details found"));
+    }
+
+    @Test
+    void testBulkUpload_eventBatchDetailsFetchThrowsException() {
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any(ApiResponse.class))).thenReturn("user1");
+        Map<String, Object> userMap = new HashMap<>();
+        userMap.put(Constants.ROOT_ORG_ID, "org1");
+        when(userAndOrgService.readUserProfileFromDB(eq("user1"), anyList())).thenReturn(userMap);
+        when(cassandraOperation.getRecordsByProperties(eq(Constants.KEYSPACE_SUNBIRD_COURSE), eq(Constants.EVENT_BATCH_TABLE), anyMap(), isNull(), isNull()))
+                .thenThrow(new RuntimeException("db down"));
+
+        ApiResponse result = service.externalTrainingUserBulkUpload(mock(MultipartFile.class), "event1", "batch1", "token");
+
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, result.getResponseCode());
+        assertEquals(Constants.FAILED, result.getParams().getStatus());
+        assertTrue(result.getParams().getErrMsg().contains("Error while fetching event batch details"));
     }
 
     @Test
@@ -361,6 +388,19 @@ class ExternalTrainingServiceImplTest {
     }
 
     @Test
+    void testBulkUploadStatus_userProfileEmpty() {
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any(ApiResponse.class))).thenReturn("user1");
+        when(userAndOrgService.readUserProfileFromDB(eq("user1"), anyList())).thenReturn(Collections.emptyMap());
+
+        ApiResponse result = service.externalTrainingUserBulkUploadStatus("event1", "batch1", "token");
+
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, result.getResponseCode());
+        assertEquals(Constants.FAILED, result.getParams().getStatus());
+        assertTrue(result.getParams().getErrMsg().contains("Failed to read user details from DB"));
+        verifyNoInteractions(cassandraOperation);
+    }
+
+    @Test
     void testBulkUploadStatus_unexpectedException() {
         when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any(ApiResponse.class)))
                 .thenThrow(new RuntimeException("boom"));
@@ -392,6 +432,26 @@ class ExternalTrainingServiceImplTest {
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, result.getStatusCode());
     }
 
+    @Test
+    void testDownloadFile_success() throws IOException {
+        when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any(ApiResponse.class))).thenReturn("user1");
+
+        String fileName = "present-" + UUID.randomUUID() + ".csv";
+        java.nio.file.Path tmpPath = java.nio.file.Paths.get(Constants.LOCAL_BASE_PATH + fileName);
+        java.nio.file.Files.createDirectories(tmpPath.getParent());
+        java.nio.file.Files.write(tmpPath, "Email\na@a.com\n".getBytes(StandardCharsets.UTF_8));
+
+        try {
+            ResponseEntity<Object> result = service.downloadFile(fileName, "token");
+
+            assertEquals(HttpStatus.OK, result.getStatusCode());
+            assertTrue(result.getHeaders().getFirst(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION).contains(fileName));
+            verify(storageService).downloadFile(eq(fileName), any());
+        } finally {
+            java.nio.file.Files.deleteIfExists(tmpPath);
+        }
+    }
+
     // ===========================
     // downloadBulkUploadSampleFile
     // ===========================
@@ -404,5 +464,27 @@ class ExternalTrainingServiceImplTest {
         ResponseEntity<org.springframework.core.io.Resource> result = service.downloadBulkUploadSampleFile();
 
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, result.getStatusCode());
+    }
+
+    @Test
+    void testDownloadBulkUploadSampleFile_success() throws IOException {
+        String fileName = "sample-" + UUID.randomUUID() + ".csv";
+        when(serverConfig.getExternalTrainingUserBulkUploadSampleFileName()).thenReturn(fileName);
+
+        java.nio.file.Path filePath = java.nio.file.Paths.get(Constants.LOCAL_BASE_PATH, fileName);
+        java.nio.file.Files.createDirectories(filePath.getParent());
+        java.nio.file.Files.write(filePath, "Email\na@a.com\n".getBytes(StandardCharsets.UTF_8));
+
+        try {
+            ResponseEntity<org.springframework.core.io.Resource> result = service.downloadBulkUploadSampleFile();
+
+            assertEquals(HttpStatus.OK, result.getStatusCode());
+            assertTrue(result.getHeaders().getFirst(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION).contains(fileName));
+            verify(storageService).downloadFile(eq(fileName), any());
+            // service deletes the temp file itself in the finally block
+            assertFalse(java.nio.file.Files.exists(filePath));
+        } finally {
+            java.nio.file.Files.deleteIfExists(filePath);
+        }
     }
 }
