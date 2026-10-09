@@ -11,7 +11,6 @@ import com.igot.cb.util.CbExtServerProperties;
 import com.igot.cb.util.Constants;
 import com.igot.cb.util.ProjectUtil;
 import org.apache.commons.collections.CollectionUtils;
-import org.apache.commons.collections.MapUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
@@ -306,19 +305,7 @@ public class ExternalTrainingServiceImpl implements ExternalTrainingService {
     }
 
     private String getRootOrgFromUser(String userId, ApiResponse response) {
-        String rootOrgId = null;
-        Map<String, Object> userMap = userAndOrgService.readUserProfileFromDB(userId,
-                Arrays.asList(Constants.ID, Constants.ROOT_ORG_ID));
-        if (MapUtils.isEmpty(userMap)) {
-            response.getParams().setStatus(Constants.FAILED);
-            response.getParams()
-                    .setErrMsg("Failed to read user details from DB. UserId: " + userId);
-            response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
-            return rootOrgId;
-        }
-        rootOrgId = (String) userMap.get(Constants.ROOT_ORG_ID);
-
-        return rootOrgId;
+        return ProjectUtil.getRootOrgFromUser(userAndOrgService, userId, response);
     }
 
     @Override

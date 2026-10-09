@@ -499,6 +499,19 @@ public class CbPlanServiceImpl {
             response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
             return;
         }
+        if (!applyOrgScopeLookupUpdate(updatedRequest, rootOrgIdsInCriteria, cbPlanId, response)) {
+            return;
+        }
+        if (!removeStaleCustomOrgLookups(existingOrgScope, rootOrgIdsInCriteria, existingRootOrgIdsInCriteria,
+                cbPlanId, response)) {
+            return;
+        }
+        removeAllScopeIfOrgsAdded(existingOrgScope, rootOrgIdsInCriteria, existingRootOrgIdsInCriteria, cbPlanId,
+                response);
+    }
+
+    private boolean applyOrgScopeLookupUpdate(Map<String, Object> updatedRequest, Set<String> rootOrgIdsInCriteria,
+            String cbPlanId, ApiResponse response) {
         if (Constants.SINGLE.equalsIgnoreCase((String) updatedRequest.get(Constants.ORG_SCOPE)) ||
                 Constants.CUSTOM.equalsIgnoreCase((String) updatedRequest.get(Constants.ORG_SCOPE))) {
             ApiResponse lookupResp = upsertCustomOrgLookup(
@@ -510,7 +523,7 @@ public class CbPlanServiceImpl {
                 response.getParams().setStatus(Constants.FAILED);
                 response.getParams().setErr(lookupResp.getParams().getErr());
                 response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
-                return;
+                return false;
             }
         } else if (Constants.ALL.equalsIgnoreCase((String) updatedRequest.get(Constants.ORG_SCOPE))) {
             ApiResponse singleResp = upsertAllOrgLookup(String.valueOf(cbPlanId),
@@ -520,10 +533,14 @@ public class CbPlanServiceImpl {
                 response.getParams().setStatus(Constants.FAILED);
                 response.getParams().setErr(singleResp.getParams().getErr());
                 response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
-                return;
+                return false;
             }
         }
+        return true;
+    }
 
+    private boolean removeStaleCustomOrgLookups(String existingOrgScope, Set<String> rootOrgIdsInCriteria,
+            Set<String> existingRootOrgIdsInCriteria, String cbPlanId, ApiResponse response) {
         Set<String> removed = new HashSet<>(existingRootOrgIdsInCriteria);
         removed.removeAll(rootOrgIdsInCriteria);
         if (CollectionUtils.isNotEmpty(removed) && (Constants.CUSTOM.equalsIgnoreCase(existingOrgScope)
@@ -533,9 +550,14 @@ public class CbPlanServiceImpl {
                 response.getParams().setStatus(Constants.FAILED);
                 response.getParams().setErr(removeResp.getParams().getErr());
                 response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
-                return;
+                return false;
             }
         }
+        return true;
+    }
+
+    private void removeAllScopeIfOrgsAdded(String existingOrgScope, Set<String> rootOrgIdsInCriteria,
+            Set<String> existingRootOrgIdsInCriteria, String cbPlanId, ApiResponse response) {
         if (Constants.ALL.equalsIgnoreCase(existingOrgScope)) {
             // We had 'ALL' scope previously. So, let's check if anything is added.
             Set<String> newlyAdded = new HashSet<>(rootOrgIdsInCriteria);
@@ -724,7 +746,6 @@ public class CbPlanServiceImpl {
                 response.setResponseCode(HttpStatus.BAD_REQUEST);
             }
         } catch (Exception e) {
-            e.printStackTrace();
             log.error("Failed to Read CB Plan for OrgId: " + userOrgId + "for CB PlanId: " + cbPlanId, e);
             response.getParams().setStatus(Constants.FAILED);
             response.getParams().setErr(e.getMessage());
@@ -1199,19 +1220,7 @@ public class CbPlanServiceImpl {
     }
 
     private String getRootOrgFromUser(String userId, ApiResponse response) {
-        String rootOrgId = null;
-        Map<String, Object> userMap = userAndOrgService.readUserProfileFromDB(userId,
-                Arrays.asList(Constants.ID, Constants.ROOT_ORG_ID));
-        if (MapUtils.isEmpty(userMap)) {
-            response.getParams().setStatus(Constants.FAILED);
-            response.getParams()
-                    .setErrMsg("Failed to read user details from DB. UserId: " + userId);
-            response.setResponseCode(HttpStatus.INTERNAL_SERVER_ERROR);
-            return rootOrgId;
-        }
-        rootOrgId = (String) userMap.get(Constants.ROOT_ORG_ID);
-
-        return rootOrgId;
+        return ProjectUtil.getRootOrgFromUser(userAndOrgService, userId, response);
     }
 
     private boolean getCCAFromOrg(String orgId, ApiResponse response) {

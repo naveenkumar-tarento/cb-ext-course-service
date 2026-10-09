@@ -65,7 +65,7 @@ class ExternalTrainingBulkUploadConsumerTest {
 
         consumer = Mockito.spy(new ExternalTrainingBulkUploadConsumer(notificationService, props, cassandraOperation,
                 storageService, outboundService, certService, contentInfoService));
-        lenient().when(props.getLocalBasePath()).thenReturn(Constants.LOCAL_BASE_PATH);
+        lenient().when(props.getLocalBasePath()).thenReturn("/tmp/");
 
         inject("objectMapper", new ObjectMapper());
     }
@@ -1037,7 +1037,7 @@ class ExternalTrainingBulkUploadConsumerTest {
     @Test
     void testProcessExternalTrainingBulkUpload_fileExistsButEmpty_marksFailed() throws Exception {
         String fileName = "empty-" + UUID.randomUUID() + ".csv";
-        File file = new File(Constants.LOCAL_BASE_PATH + fileName);
+        File file = new File("/tmp/" + fileName);
         file.getParentFile().mkdirs();
         assertTrue(file.createNewFile());
 
@@ -1065,7 +1065,7 @@ class ExternalTrainingBulkUploadConsumerTest {
     @Test
     void testProcessExternalTrainingBulkUpload_headersAlreadyContainStatusColumns_allRecordsFail_noNotification() throws Exception {
         String fileName = "bulk-" + UUID.randomUUID() + ".csv";
-        File file = new File(Constants.LOCAL_BASE_PATH + fileName);
+        File file = new File("/tmp/" + fileName);
         file.getParentFile().mkdirs();
         try (java.io.FileWriter fw = new java.io.FileWriter(file)) {
             fw.write("Email,Status,Error Details\n");
@@ -1127,7 +1127,7 @@ class ExternalTrainingBulkUploadConsumerTest {
     @Test
     void testProcessExternalTrainingBulkUpload_mixedSuccessAndFailure_fullFlow() throws Exception {
         String fileName = "bulk-" + UUID.randomUUID() + ".csv";
-        File file = new File(Constants.LOCAL_BASE_PATH + fileName);
+        File file = new File("/tmp/" + fileName);
         file.getParentFile().mkdirs();
         try (java.io.FileWriter fw = new java.io.FileWriter(file)) {
             fw.write("Email,Name\n");
@@ -1220,7 +1220,7 @@ class ExternalTrainingBulkUploadConsumerTest {
     @Test
     void testProcessExternalTrainingBulkUpload_missingEmailColumn_hitsCatchBlock_marksFailed() throws Exception {
         String fileName = "bulk-" + UUID.randomUUID() + ".csv";
-        File file = new File(Constants.LOCAL_BASE_PATH + fileName);
+        File file = new File("/tmp/" + fileName);
         file.getParentFile().mkdirs();
         try (java.io.FileWriter fw = new java.io.FileWriter(file)) {
             fw.write("Name\n");

@@ -1,15 +1,19 @@
 package com.igot.cb.util;
 
 import java.sql.Timestamp;
+import java.util.Arrays;
 import java.util.Date;
+import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
+import org.apache.commons.collections4.MapUtils;
 import org.joda.time.DateTime;
 import org.springframework.http.HttpStatus;
 
 import com.igot.cb.model.ApiRespParam;
 import com.igot.cb.model.ApiResponse;
+import com.igot.cb.service.UserAndOrgServiceImpl;
 
 public class ProjectUtil {
 
@@ -52,6 +56,18 @@ public class ProjectUtil {
         response.getParams().setStatus(Constants.FAILED);
         response.setResponseCode(httpStatus);
         response.getParams().setErrMsg(errorMessage);
+    }
+
+    public static String getRootOrgFromUser(UserAndOrgServiceImpl userAndOrgService, String userId,
+            ApiResponse response) {
+        Map<String, Object> userMap = userAndOrgService.readUserProfileFromDB(userId,
+                Arrays.asList(Constants.ID, Constants.ROOT_ORG_ID));
+        if (MapUtils.isEmpty(userMap)) {
+            setFailedResponse(response, "Failed to read user details from DB. UserId: " + userId,
+                    HttpStatus.INTERNAL_SERVER_ERROR);
+            return null;
+        }
+        return (String) userMap.get(Constants.ROOT_ORG_ID);
     }
 
     public static Boolean validateEmailPattern(String email) {

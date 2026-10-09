@@ -576,7 +576,6 @@ public class Constants {
     public static final String SUCCESSFUL_UPPERCASE = "SUCCESSFUL";
     public static final String FAILED_UPPERCASE = "FAILED";
     public static final String STATUS_IN_PROGRESS_UPPERCASE = "IN-PROGRESS";
-    public static final String LOCAL_BASE_PATH= "/tmp/";
     public static final String ENROLLED_DATE_KEY_LOWER = "enrolled_date";
     public static final String DATE_TIME = "dateTime";
     public static final String EVENT_BATCH_TABLE_NAME = "event_batch";

@@ -62,7 +62,7 @@ class ExternalTrainingServiceImplTest {
     void setUp() {
         service = new ExternalTrainingServiceImpl(storageService, serverConfig, kafkaTemplate, cassandraOperation,
                 accessTokenValidator, new ObjectMapper().registerModule(new JavaTimeModule()), userAndOrgService);
-        lenient().when(serverConfig.getLocalBasePath()).thenReturn(Constants.LOCAL_BASE_PATH);
+        lenient().when(serverConfig.getLocalBasePath()).thenReturn("/tmp/");
     }
 
     // ===========================
@@ -438,7 +438,7 @@ class ExternalTrainingServiceImplTest {
         when(accessTokenValidator.fetchUserIdFromAccessToken(anyString(), any(ApiResponse.class))).thenReturn("user1");
 
         String fileName = "present-" + UUID.randomUUID() + ".csv";
-        java.nio.file.Path tmpPath = java.nio.file.Paths.get(Constants.LOCAL_BASE_PATH + fileName);
+        java.nio.file.Path tmpPath = java.nio.file.Paths.get("/tmp/" + fileName);
         java.nio.file.Files.createDirectories(tmpPath.getParent());
         java.nio.file.Files.write(tmpPath, "Email\na@a.com\n".getBytes(StandardCharsets.UTF_8));
 
@@ -472,7 +472,7 @@ class ExternalTrainingServiceImplTest {
         String fileName = "sample-" + UUID.randomUUID() + ".csv";
         when(serverConfig.getExternalTrainingUserBulkUploadSampleFileName()).thenReturn(fileName);
 
-        java.nio.file.Path filePath = java.nio.file.Paths.get(Constants.LOCAL_BASE_PATH, fileName);
+        java.nio.file.Path filePath = java.nio.file.Paths.get("/tmp/", fileName);
         java.nio.file.Files.createDirectories(filePath.getParent());
         java.nio.file.Files.write(filePath, "Email\na@a.com\n".getBytes(StandardCharsets.UTF_8));
 
