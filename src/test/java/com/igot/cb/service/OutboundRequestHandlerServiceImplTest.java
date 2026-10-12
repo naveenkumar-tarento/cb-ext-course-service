@@ -580,6 +580,16 @@ class OutboundRequestHandlerServiceImplTest {
     }
 
     @Test
+    void testLogUnexpectedError_ResponseSerializationFailure_LogsParseFailure() throws Exception {
+        java.lang.reflect.Method method = OutboundRequestHandlerServiceImpl.class
+                .getDeclaredMethod("logUnexpectedError", String.class, Exception.class, Object.class);
+        method.setAccessible(true);
+
+        assertDoesNotThrow(() -> method.invoke(outboundService, "http://test.com/api",
+                new RuntimeException("boom"), new ThrowingBean()));
+    }
+
+    @Test
     void testFetchResultUsingPost_JsonProcessingException() {
         String uri = "http://test.com/api/post";
         ThrowingBean request = new ThrowingBean();

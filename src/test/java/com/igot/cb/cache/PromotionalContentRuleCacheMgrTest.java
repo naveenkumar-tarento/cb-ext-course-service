@@ -69,6 +69,20 @@ class PromotionalContentRuleCacheMgrTest {
     }
 
     @Test
+    void testLoadAccessSettingRules_SkipsArchivedRecords() {
+        Map<String, Object> archivedRecord = createCassandraRecordWithFullData("do_archived", "Course");
+        archivedRecord.put(Constants.IS_ARCHIVED_KEY, true);
+        Map<String, Object> activeRecord = createCassandraRecordWithFullData("do_active", "Course");
+
+        mockForEachPromoRules(List.of(archivedRecord, activeRecord));
+
+        Collection<CachedAccessSettingRule> result = cacheMgr.getAccessSettingRules();
+
+        assertEquals(1, result.size());
+        assertEquals("do_active", result.iterator().next().getContextId());
+    }
+
+    @Test
     void testLoadAccessSettingRules_HandlesException() {
         doThrow(new RuntimeException("Database error"))
                 .when(cassandraOperation)

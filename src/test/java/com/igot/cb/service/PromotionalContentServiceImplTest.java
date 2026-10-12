@@ -303,6 +303,17 @@ class PromotionalContentServiceImplTest {
     }
 
     @Test
+    void testDelete_InvalidAuthToken_ReturnsEarlyWithoutDeleting() {
+        when(accessTokenValidator.fetchUserIdFromAccessToken(eq(AUTH_TOKEN), any(ApiResponse.class)))
+                .thenReturn("");
+
+        ApiResponse result = promotionalContentService.delete(CONTENT_ID, AUTH_TOKEN);
+
+        assertNotNull(result);
+        verifyNoInteractions(cassandraOperation);
+    }
+
+    @Test
     void testDelete_EmptyContentId() {
         when(accessTokenValidator.fetchUserIdFromAccessToken(eq(AUTH_TOKEN), any(ApiResponse.class)))
                 .thenReturn(USER_ID);

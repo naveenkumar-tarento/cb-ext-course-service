@@ -175,6 +175,92 @@ class AccessSettingRuleCacheMgrTest {
     }
 
     @Test
+    void testLoadAccessSettingRules_recordWithNullContextData_logsWarningAndSkips() {
+        when(redisCacheMgr.getAllCachedAccessRules(redisKey)).thenReturn(Map.of());
+
+        Map<String, Object> recordMap = Map.of(
+                "contextId", "do_123",
+                "contextIdType", "Course",
+                "contextData", "null"
+        );
+        mockForEachAccessRules(List.of(recordMap));
+
+        var result = cacheMgr.getAccessSettingRules();
+
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testLoadAccessSettingRules_recordProcessingThrowsException_logsErrorAndContinues() {
+        when(redisCacheMgr.getAllCachedAccessRules(redisKey)).thenReturn(Map.of());
+
+        Map<String, Object> badRecord = Map.of(
+                "contextId", "do_bad",
+                "contextIdType", "Course",
+                "contextData", "{invalid json"
+        );
+        Map<String, Object> goodRecord = Map.of(
+                "contextId", "do_good",
+                "contextIdType", "Course",
+                "contextData", "{\"accessControlId\": {\"userGroups\": []}}"
+        );
+        mockForEachAccessRules(List.of(badRecord, goodRecord));
+
+        var result = cacheMgr.getAccessSettingRules();
+
+        assertEquals(1, result.size());
+        assertEquals("do_good", result.iterator().next().getContextId());
+    }
+
+    @Test
+    void testProcessCriteria_missingCriteriaKey_logsWarningAndSkips() {
+        when(redisCacheMgr.getAllCachedAccessRules(redisKey)).thenReturn(Map.of());
+
+        Map<String, Object> recordMap = Map.of(
+                "contextId", "do_123",
+                "contextIdType", "Course",
+                "contextData", """
+                    {
+                      "accessControlId": {
+                        "userGroups": [
+                          {
+                            "userGroupId": "group-123",
+                            "userGroupName": "Test Group",
+                            "userGroupCriteriaList": [
+                              {
+                                "criteriaValue": [1, 2]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                    """
+        );
+        mockForEachAccessRules(List.of(recordMap));
+
+        var result = cacheMgr.getAccessSettingRules();
+
+        assertEquals(1, result.size());
+    }
+
+    @Test
+    void testGetOrLoadAccessSettingRule_cacheLoadedRuleProcessingThrows_logsErrorButStillReturnsRule() {
+        Map<String, Object> cassRecord = new HashMap<>();
+        cassRecord.put(Constants.CONTEXT_ID_KEY, "do_bad");
+        cassRecord.put(Constants.CONTEXT_ID_TYPE, "Course");
+        cassRecord.put(Constants.CONTEXT_DATA_KEY, "{\"accessControlId\": \"not-a-map\"}");
+        when(cassandraOperation.getRecordsByProperties(
+                anyString(), anyString(), any(), any(), any()))
+                .thenReturn(List.of(cassRecord));
+
+        CachedAccessSettingRule result = cacheMgr.getOrLoadAccessSettingRule("do_bad", "Course");
+
+        assertNotNull(result);
+        assertEquals("do_bad", result.getContextId());
+    }
+
+    @Test
     void testProcessContextData_noAccessControl() {
         when(redisCacheMgr.getAllCachedAccessRules(redisKey)).thenReturn(Map.of());
         
