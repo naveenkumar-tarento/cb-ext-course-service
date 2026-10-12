@@ -321,6 +321,24 @@ class AccessSettingsServiceImplTest {
   }
 
   @Test
+  void testRead_Failure_NotArchivedButContextDataBlank_ReturnsNotFound() {
+    String contentId = "cid-blank";
+    Map<String, Object> dbRecord = new HashMap<>();
+    dbRecord.put(Constants.CONTEXT_ID, contentId);
+    dbRecord.put(Constants.IS_ARCHIVED_KEY, false);
+    dbRecord.put(Constants.CONTEXT_DATA_KEY, "");
+    when(cassandraOperation.getRecordsByProperties(
+            anyString(), anyString(), anyMap(), anyList(), isNull()
+    )).thenReturn(Collections.singletonList(dbRecord));
+
+    ApiResponse response = service.read(contentId);
+
+    assertEquals(HttpStatus.NOT_FOUND, response.getResponseCode());
+    assertEquals(Constants.FAILED, response.getParams().getStatus());
+    assertTrue(response.getParams().getErrMsg().contains("No access settings found"));
+  }
+
+  @Test
   void testRead_Failure_CassandraThrowsException() {
     String contentId = "cid-exc";
     when(cassandraOperation.getRecordsByProperties(
@@ -407,6 +425,21 @@ class AccessSettingsServiceImplTest {
     assertEquals(HttpStatus.BAD_REQUEST, response.getResponseCode());
     assertEquals(Constants.FAILED, response.getParams().getStatus());
     assertEquals("Criteria key and value must not be empty", response.getParams().getErrMsg());
+    verifyNoInteractions(accessSettingMigrationService);
+  }
+
+  @Test
+  void testAdminUpsert_ValidationThrowsUnexpectedException_ReturnsInternalServerError() {
+    Map<String, Object> accessControl = new HashMap<>();
+    accessControl.put(Constants.USER_GROUPS, List.of("not-a-map"));
+    Map<String, Object> details = new HashMap<>();
+    details.put(Constants.ACCESS_CONTROL, accessControl);
+
+    ApiResponse response = service.adminUpsert(details);
+
+    assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getResponseCode());
+    assertEquals(Constants.FAILED, response.getParams().getStatus());
+    assertTrue(response.getParams().getErrMsg().contains("Failed to create access settings"));
     verifyNoInteractions(accessSettingMigrationService);
   }
 

@@ -10,6 +10,7 @@ import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -640,6 +641,42 @@ class AccessSettingMigrationServiceImplTest {
 
                 assertEquals(0, response.getResult().get("Successful"));
                 assertEquals(1, response.getResult().get("Skipped"));
+        }
+
+        @Test
+        void testMigrateCBPlanAccessSettingRules_buildContextDataBlank_marksSkipped() throws Exception {
+                List<Map<String, Object>> cbPlanList = new ArrayList<>();
+                Map<String, Object> cbPlan = new HashMap<>();
+                cbPlan.put(Constants.STATUS, Constants.LIVE);
+                cbPlan.put(Constants.NAME, "Live Plan");
+                cbPlan.put(Constants.END_DATE_KEY, java.time.Instant.now());
+                cbPlan.put(Constants.CONTENT_LIST, Arrays.asList("content1"));
+                cbPlan.put(Constants.CONTENT_TYPE, "Course");
+                cbPlan.put(Constants.ORG_ID, "org1");
+                cbPlan.put(Constants.ID, "plan1");
+                cbPlan.put(Constants.ASSIGNMENT_TYPE, "AllUser");
+                cbPlan.put(Constants.CREATED_AT_KEY, java.time.Instant.now());
+                cbPlan.put(Constants.CREATED_BY, "user1");
+                cbPlanList.add(cbPlan);
+
+                when(cassandraOperation.getRecordsByProperties(
+                        eq(Constants.KEYSPACE_SUNBIRD), eq(Constants.CB_PLAN_TABLE),
+                        isNull(), isNull(), isNull())).thenReturn(cbPlanList);
+
+                ObjectMapper brokenMapper = mock(ObjectMapper.class);
+                when(brokenMapper.writeValueAsString(any())).thenReturn("");
+                java.lang.reflect.Field field = AccessSettingMigrationServiceImpl.class.getDeclaredField("objectMapper");
+                field.setAccessible(true);
+                field.set(migrationService, brokenMapper);
+
+                ApiResponse response = migrationService.migrateCBPlanAccessSettingRules();
+
+                assertEquals(HttpStatus.OK, response.getResponseCode());
+                assertEquals(0, response.getResult().get("Successful"));
+                assertEquals(1, response.getResult().get("Skipped"));
+                @SuppressWarnings("unchecked")
+                List<String> errors = (List<String>) response.getResult().get("Errors");
+                assertTrue(errors.get(0).contains("Failed to build context data"));
         }
 
         @Test

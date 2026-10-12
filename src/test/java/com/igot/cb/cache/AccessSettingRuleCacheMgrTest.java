@@ -15,8 +15,13 @@ import com.igot.cb.util.Constants;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.stream.Stream;
 
 @ExtendWith(MockitoExtension.class)
 class AccessSettingRuleCacheMgrTest {
@@ -212,36 +217,75 @@ class AccessSettingRuleCacheMgrTest {
         assertEquals("do_good", result.iterator().next().getContextId());
     }
 
-    @Test
-    void testProcessCriteria_missingCriteriaKey_logsWarningAndSkips() {
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("malformedContextDataCases")
+    void testGetAccessSettingRules_malformedContextData_isSkippedGracefully(String caseName, String contextDataJson) {
         when(redisCacheMgr.getAllCachedAccessRules(redisKey)).thenReturn(Map.of());
 
         Map<String, Object> recordMap = Map.of(
                 "contextId", "do_123",
                 "contextIdType", "Course",
-                "contextData", """
-                    {
-                      "accessControlId": {
-                        "userGroups": [
-                          {
-                            "userGroupId": "group-123",
-                            "userGroupName": "Test Group",
-                            "userGroupCriteriaList": [
-                              {
-                                "criteriaValue": [1, 2]
-                              }
-                            ]
-                          }
-                        ]
-                      }
-                    }
-                    """
+                "contextData", contextDataJson
         );
         mockForEachAccessRules(List.of(recordMap));
 
         var result = cacheMgr.getAccessSettingRules();
 
         assertEquals(1, result.size());
+    }
+
+    private static Stream<Arguments> malformedContextDataCases() {
+        return Stream.of(
+                Arguments.of("noAccessControl", "{}"),
+                Arguments.of("noUserGroups", "{\"accessControlId\": {}}"),
+                Arguments.of("noCriteriaList", """
+                        {
+                          "accessControlId": {
+                            "userGroups": [
+                              {
+                                "userGroupId": "group-123",
+                                "userGroupName": "Test Group"
+                              }
+                            ]
+                          }
+                        }
+                        """),
+                Arguments.of("invalidCriteriaValues", """
+                        {
+                          "accessControlId": {
+                            "userGroups": [
+                              {
+                                "userGroupId": "group-123",
+                                "userGroupName": "Test Group",
+                                "userGroupCriteriaList": [
+                                  {
+                                    "criteriaKey": "designation",
+                                    "criteriaValue": ["invalid", "2"]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                        """),
+                Arguments.of("missingCriteriaKey", """
+                        {
+                          "accessControlId": {
+                            "userGroups": [
+                              {
+                                "userGroupId": "group-123",
+                                "userGroupName": "Test Group",
+                                "userGroupCriteriaList": [
+                                  {
+                                    "criteriaValue": [1, 2]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                        """)
+        );
     }
 
     @Test
@@ -258,98 +302,6 @@ class AccessSettingRuleCacheMgrTest {
 
         assertNotNull(result);
         assertEquals("do_bad", result.getContextId());
-    }
-
-    @Test
-    void testProcessContextData_noAccessControl() {
-        when(redisCacheMgr.getAllCachedAccessRules(redisKey)).thenReturn(Map.of());
-        
-        Map<String, Object> recordMap = Map.of(
-                "contextId", "do_123",
-                "contextIdType", "Course",
-                "contextData", "{}"
-        );
-        mockForEachAccessRules(List.of(recordMap));
-
-        var result = cacheMgr.getAccessSettingRules();
-        
-        assertEquals(1, result.size());
-    }
-
-    @Test
-    void testProcessContextData_noUserGroups() {
-        when(redisCacheMgr.getAllCachedAccessRules(redisKey)).thenReturn(Map.of());
-        
-        Map<String, Object> recordMap = Map.of(
-                "contextId", "do_123",
-                "contextIdType", "Course",
-                "contextData", "{\"accessControlId\": {}}"
-        );
-        mockForEachAccessRules(List.of(recordMap));
-
-        var result = cacheMgr.getAccessSettingRules();
-        
-        assertEquals(1, result.size());
-    }
-
-    @Test
-    void testProcessContextData_noCriteriaList() {
-        when(redisCacheMgr.getAllCachedAccessRules(redisKey)).thenReturn(Map.of());
-        
-        Map<String, Object> recordMap = Map.of(
-                "contextId", "do_123",
-                "contextIdType", "Course",
-                "contextData", """
-                    {
-                      "accessControlId": {
-                        "userGroups": [
-                          {
-                            "userGroupId": "group-123",
-                            "userGroupName": "Test Group"
-                          }
-                        ]
-                      }
-                    }
-                    """
-        );
-        mockForEachAccessRules(List.of(recordMap));
-
-        var result = cacheMgr.getAccessSettingRules();
-        
-        assertEquals(1, result.size());
-    }
-
-    @Test
-    void testProcessContextData_invalidCriteriaValues() {
-        when(redisCacheMgr.getAllCachedAccessRules(redisKey)).thenReturn(Map.of());
-        
-        Map<String, Object> recordMap = Map.of(
-                "contextId", "do_123",
-                "contextIdType", "Course",
-                "contextData", """
-                    {
-                      "accessControlId": {
-                        "userGroups": [
-                          {
-                            "userGroupId": "group-123",
-                            "userGroupName": "Test Group",
-                            "userGroupCriteriaList": [
-                              {
-                                "criteriaKey": "designation",
-                                "criteriaValue": ["invalid", "2"]
-                              }
-                            ]
-                          }
-                        ]
-                      }
-                    }
-                    """
-        );
-        mockForEachAccessRules(List.of(recordMap));
-
-        var result = cacheMgr.getAccessSettingRules();
-        
-        assertEquals(1, result.size());
     }
 
     @Test
